@@ -1,0 +1,280 @@
+{
+ "_doc": "Agent Cats sprite source. Each grid row is one pixel row; '.' = transparent. Coat keys are palette-swapped per cat. Rendered at 1.5pt per pixel (3px on Retina).",
+ "keys": {
+  "w": "coat base",
+  "x": "coat base shade",
+  "p": "coat patch",
+  "q": "patch shade",
+  "h": "highlight",
+  "k": "eye/ink",
+  "n": "nose + inner ear",
+  "g": "whisker/mouth",
+  "c": "collar (agent colour)",
+  "b": "bell",
+  "d": "ground shadow (alpha)",
+  "L": "laptop body",
+  "M": "laptop rim",
+  "S": "screen glow",
+  "B": "book cover",
+  "P": "page",
+  "R": "sign board",
+  "W": "sign ink",
+  "Y": "sparkle",
+  "Z": "sleep z",
+  "E": "alert red"
+ },
+ "poses": {
+  "sit": [
+   "........pp....ww......",
+   ".......pnpp..wnww.....",
+   "......ppnpphwwnww.....",
+   "......pppppwwwwwww....",
+   "......ppkpppwwkwww....",
+   "......ppkpppwwkwww....",
+   ".....gppppwwnwwwwwg...",
+   "......pppwwgwgwwww....",
+   "......ccccccccccccc...",
+   ".......wwwwwbwwwwx....",
+   ".......wwwwwwwwwwx....",
+   "......pwwwwwwwwwxxp...",
+   "..w...ppwwwwwwwwxxpp..",
+   ".pp..pppwwwwwwwxxxpq..",
+   ".pp..pppwwwwwwwxxqqq..",
+   "..pp.pppwwwwwwxxqqqq..",
+   "..pp.ppwwwwwwwxxxqqq..",
+   "...ppppwwwwwwwxxxqqq..",
+   "....pppwwpwwwwwwwwqq..",
+   "....pppwwwwwwwwwwwwq..",
+   ".....ddddddddddddddd.."
+  ],
+  "loaf": [
+   "......................",
+   "......................",
+   "......................",
+   "......................",
+   "......................",
+   "......................",
+   "......................",
+   "......................",
+   "...pp...ww............",
+   "..pnpp.wnw............",
+   "..ppppwwwwwpppppp.....",
+   ".gppppwwwwwpppppppq...",
+   "..pkkpwwkkwppwwwwpqq..",
+   "..ppppwnwwwpwwwwwwqq..",
+   "..cccccccccwwwwwwxxqq.",
+   "..wwwwwbwwwwwwwwwxxqq.",
+   ".wwwwwwwwwwwwwwwxxxqq.",
+   ".ppppppppppwwwwxxxqqq.",
+   "..ppppppppppqqqqqqqq..",
+   "......................",
+   ".dddddddddddddddddddd."
+  ]
+ },
+ "faces": {
+  "_doc": "Overrides for rows 4-5 of 'sit' (eye rows). Space = keep base pixel.",
+  "open": [
+   "        k     k       ",
+   "        k     k       "
+  ],
+  "closed": [
+   "                      ",
+   "       kk    kk       "
+  ],
+  "happy": [
+   "        k     k       ",
+   "       k k   k k      "
+  ],
+  "dizzy": [
+   "       k k   k k      ",
+   "        k     k       "
+  ],
+  "wide": [
+   "       kk    kk       ",
+   "       kk    kk       "
+  ]
+ },
+ "props": {
+  "_doc": "Overlays on the 'sit' pose. at = [col,row] of the top-left cell; may extend past the 22px canvas.",
+  "laptop": {
+   "at": [
+    12,
+    12
+   ],
+   "grid": [
+    "........MM",
+    "......MSSM",
+    ".....MSSSM",
+    "....MSSSM.",
+    "...MSSSM..",
+    "..MSSSM...",
+    "LLLLLLLLLL",
+    "MMMMMMMMMM",
+    "ddddddddd."
+   ]
+  },
+  "book": {
+   "at": [
+    5,
+    12
+   ],
+   "grid": [
+    ".BBBB.BBBB.",
+    "BPPPPBPPPPB",
+    "BPggPBPggPB",
+    "BPPPPBPPPPB",
+    "BPggPBPgPPB",
+    "BBBBBBBBBBB"
+   ]
+  },
+  "sign": {
+   "at": [
+    16,
+    0
+   ],
+   "grid": [
+    "RRRRRRR",
+    "RRRWRRR",
+    "RRRWRRR",
+    "RRRRRRR",
+    "RRRWRRR",
+    "RRRRRRR",
+    "...h...",
+    "...w...",
+    "..ww..."
+   ]
+  },
+  "sparkle": {
+   "at": [
+    0,
+    0
+   ],
+   "grid": [
+    "Y.....................Y.",
+    "......................",
+    "...Y...............Y..",
+    "..YYY.................",
+    "...Y..................",
+    "....................Y.",
+    "...................YYY",
+    "....................Y."
+   ]
+  },
+  "zzz": {
+   "at": [
+    12,
+    0
+   ],
+   "grid": [
+    "......ZZZ",
+    ".......Z.",
+    "......ZZZ",
+    "..ZZ.....",
+    "...Z.....",
+    "..ZZ....."
+   ]
+  },
+  "alert": {
+   "at": [
+    18,
+    0
+   ],
+   "grid": [
+    ".EE.",
+    ".EE.",
+    ".EE.",
+    ".EE.",
+    "....",
+    ".EE."
+   ]
+  }
+ },
+ "palette_common": {
+  "k": "#1E1A18",
+  "n": "#E2637A",
+  "g": "#BDB6AC",
+  "b": "#F2B33D",
+  "d": "rgba(40,28,20,0.22)",
+  "h": "#FFFFFF",
+  "L": "#4A4542",
+  "M": "#2E2A28",
+  "S": "#9FE3D0",
+  "B": "#B8573A",
+  "P": "#FFF4E2",
+  "R": "#F26A2E",
+  "W": "#FFF4E2",
+  "Y": "#FFD45C",
+  "Z": "#8FA9C8",
+  "E": "#E5483A"
+ },
+ "agents": {
+  "claude": "#E06B3B",
+  "codex": "#2E9C93"
+ },
+ "coats": {
+  "Mochi": {
+   "kind": "calico",
+   "w": "#FFFFFF",
+   "x": "#E8E1D8",
+   "p": "#F5934A",
+   "q": "#D9773A",
+   "quirk": "Kneads the perch before every task"
+  },
+  "Pepper": {
+   "kind": "tuxedo",
+   "w": "#FFFFFF",
+   "x": "#E8E1D8",
+   "p": "#2F2B2A",
+   "q": "#1F1C1B",
+   "quirk": "Reads every file twice"
+  },
+  "Biscuit": {
+   "kind": "ginger",
+   "w": "#FFE8C7",
+   "x": "#F2D2A6",
+   "p": "#E8843C",
+   "q": "#C96B2A",
+   "quirk": "Celebrates loudly"
+  },
+  "Sumi": {
+   "kind": "black",
+   "w": "#3A3433",
+   "x": "#2A2524",
+   "p": "#2E2928",
+   "q": "#1F1B1A",
+   "quirk": "Night owl, perks up after 10pm"
+  },
+  "Miso": {
+   "kind": "siamese",
+   "w": "#F6EBD9",
+   "x": "#E6D5BC",
+   "p": "#6E5444",
+   "q": "#56402F",
+   "quirk": "Stares at the cursor"
+  },
+  "Pebble": {
+   "kind": "grey tabby",
+   "w": "#C9C6C2",
+   "x": "#AEAAA5",
+   "p": "#8A8682",
+   "q": "#6F6B67",
+   "quirk": "Naps the moment a task ends"
+  },
+  "Clementine": {
+   "kind": "cream",
+   "w": "#FFF1DA",
+   "x": "#F2DDBA",
+   "p": "#F7C98B",
+   "q": "#E5AE6A",
+   "quirk": "Chases the progress bar"
+  },
+  "Oreo": {
+   "kind": "cow",
+   "w": "#FFFFFF",
+   "x": "#E8E1D8",
+   "p": "#3B3533",
+   "q": "#2A2524",
+   "quirk": "Sits on the keyboard when blocked"
+  }
+ }
+}
