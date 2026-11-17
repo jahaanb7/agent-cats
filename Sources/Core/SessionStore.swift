@@ -41,6 +41,7 @@ public final class SessionStore {
             }
         }
         if let c = e.contextTokens { s.contextTokens = c }
+        if let m = e.message, !m.isEmpty { s.lastMessage = m }
         if e.source == .hook { s.hookSeen = true }
         if e.time > s.lastEventAt || isNew { s.lastEventAt = max(s.lastEventAt, e.time) }
 
@@ -50,12 +51,15 @@ public final class SessionStore {
         if drivesState {
             switch e.kind {
             case .sessionStart: if s.state == .gone || isNew { next = .idle }
-            case .prompt: next = .thinking; s.activity = e.detail.map { "\u{201C}\($0)\u{201D}" } ?? s.activity
-            case .toolStart: next = .working; if let d = e.detail { s.activity = d }
-            case .toolEnd, .toolFailed: if s.state == .working || s.state == .permission { next = .thinking }
-            case .permission: next = .permission; if let d = e.detail { s.activity = d }
-            case .question: next = .question; if let d = e.detail { s.activity = d }
-            case .turnEnd: next = .done
+            case .prompt: next = .thinking; s.question = nil; s.lastMessage = nil; s.activity = e.detail.map { "\u{201C}\($0)\u{201D}" } ?? s.activity
+            case .toolStart: next = .working; s.question = nil; if let d = e.detail { s.activity = d }
+            case .toolEnd, .toolFailed: s.question = nil; if s.state == .working || s.state == .permission || s.state == .question { next = .thinking }
+            case .permission: next = .permission; s.question = nil; if let d = e.detail { s.activity = d }
+            case .question:
+                // A bare "waiting for input" notification keeps an open multiple-choice question.
+                if let q = e.question { s.question = q } else if s.state != .question { s.question = nil }
+                next = .question; if let d = e.detail { s.activity = d }
+            case .turnEnd: next = .done; s.question = nil
             case .error: next = .error; if let d = e.detail { s.activity = d }
             case .sessionEnd, .processExit: next = .gone
             case .usage, .meta: break

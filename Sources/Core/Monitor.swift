@@ -6,6 +6,9 @@ import Foundation
 /// All state lives on `queue`; observers are called on that queue too.
 public final class Monitor {
     public let store = SessionStore()
+    let approvals = ApprovalStore()
+    var acceptsApprovals = false
+    private(set) var listenerError: String?
     public let roster = CatRoster()
     public let queue = DispatchQueue(label: "agentcats.monitor")
     public var onChange: (() -> Void)?
@@ -30,8 +33,18 @@ public final class Monitor {
         queue.async { [self] in
             discover()
             if listen {
-                server = EventServer(path: Paths.socket, queue: queue) { [weak self] obj in self?.ingestHook(obj) }
-                server?.start()
+                server = EventServer(path: Paths.socket, queue: queue) { [weak self] obj, reply in
+                    guard let self else { reply.complete([:]); return }
+                    self.ingestHook(obj)
+                    if self.acceptsApprovals && ApprovalProtocol.supports(obj) {
+                        self.approvals.add(obj, reply: reply)
+                        self.onChange?()
+                    } else { reply.complete([:]) }
+                }
+                if server?.start() != true {
+                    listenerError = "Hook connection unavailable. Close other Agent Cats listeners and reopen the app."
+                    server = nil
+                }
                 drainSpool()
             }
             watcher = DirWatcher(paths: [Paths.claudeProjects, Paths.codexSessions], queue: queue) { [weak self] paths in
@@ -54,6 +67,9 @@ public final class Monitor {
 
     func ingestHook(_ obj: [String: Any]) {
         guard let e = HookParser.parse(obj) else { return }
+        if [.toolStart, .toolEnd, .toolFailed, .turnEnd, .sessionEnd, .prompt].contains(e.kind) {
+            approvals.cancel(session: e.sessionId)
+        }
         hookEventsReceived += 1
         if let pid = e.pid, let ph = placeholderFor[pid], ph != e.sessionId {
             store.apply(e); store.merge(placeholder: ph, into: e.sessionId); placeholderFor[pid] = e.sessionId
@@ -210,6 +226,7 @@ public final class Monitor {
             for s in self.store.sessions.values where s.pid == pid && s.state != .gone {
                 self.store.apply(AgentEvent(agent: s.agent, sessionId: s.id, kind: .processExit, source: .process))
             }
+            self.approvals.cancel(session: session)
             self.placeholderFor[pid] = nil
             self.onChange?()
         }
@@ -218,11 +235,13 @@ public final class Monitor {
     }
 
     private func tick() {
+        let approvalsChanged = approvals.sweep()
         let changed = store.tick { s in
             if let pid = s.pid { return ProcInfo.isAlive(pid) }
             return nil   // log-only session: unknown liveness, expires when quiet
         }
-        if !changed.isEmpty { onChange?() }
+        for id in changed where store.sessions[id]?.state == .gone || store.sessions[id] == nil { approvals.cancel(session: id) }
+        if !changed.isEmpty || approvalsChanged { onChange?() }
     }
 
     /// Ordered sessions with their assigned cat names.

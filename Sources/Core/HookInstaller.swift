@@ -35,7 +35,9 @@ public struct HookInstaller {
                 return g
             }
             if !remove, events.contains(ev), let cmd = command {
-                groups.append(["hooks": [["type": "command", "command": cmd, "timeout": 5]]])
+                let interactive = ev == "PermissionRequest" && cmd.hasSuffix(" claude")
+                groups.append(["hooks": [["type": "command", "command": cmd + (interactive ? " --approvals" : ""),
+                                           "timeout": interactive ? Int(ApprovalProtocol.timeout + 10) : 5]]])
             }
             if groups.isEmpty { hooks[ev] = nil } else { hooks[ev] = groups }
         }

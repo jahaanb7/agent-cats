@@ -26,6 +26,22 @@ func clip(_ s: String, _ n: Int = 70) -> String {
     return one.count > n ? String(one.prefix(n - 1)) + "…" : one
 }
 
+/// Longer text for the speech bubble: whitespace trimmed, blank-line runs collapsed, length capped.
+func speechClip(_ s: String, _ n: Int = 600) -> String {
+    var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+    while t.contains("\n\n\n") { t = t.replacingOccurrences(of: "\n\n\n", with: "\n\n") }
+    return t.count > n ? String(t.prefix(n - 1)) + "…" : t
+}
+
+/// First question + option labels from an AskUserQuestion tool input.
+func askQuestion(_ input: Any?) -> AgentQuestion? {
+    guard let qs = (input as? [String: Any])?["questions"] as? [[String: Any]], let q = qs.first,
+          let text = q["question"] as? String, !text.isEmpty else { return nil }
+    let options = (q["options"] as? [[String: Any]] ?? []).compactMap { $0["label"] as? String }.map { clip($0, 48) }
+    return AgentQuestion(text: speechClip(text, 300), options: options, more: qs.count - 1,
+                         multiSelect: q["multiSelect"] as? Bool ?? false)
+}
+
 func int(_ v: Any?) -> Int { (v as? Int) ?? Int((v as? Double) ?? 0) }
 
 /// "Bash npm test", "Edit router.ts" — a short label for a tool call.
@@ -52,13 +68,21 @@ public enum HookParser {
         let agent = AgentKind(rawValue: (obj["_agent"] as? String) ?? "claude") ?? .claude
         let kind: AgentEvent.Kind
         var detail: String?
+        var question: AgentQuestion?
         switch name {
         case "SessionStart": kind = .sessionStart; detail = obj["source"] as? String
         case "UserPromptSubmit": kind = .prompt; detail = (obj["prompt"] as? String).map { clip($0) }
-        case "PreToolUse": kind = .toolStart; detail = toolLabel(obj["tool_name"] as? String ?? "tool", obj["tool_input"])
+        case "PreToolUse":
+            kind = obj["tool_name"] as? String == "AskUserQuestion" ? .question : .toolStart
+            detail = toolLabel(obj["tool_name"] as? String ?? "tool", obj["tool_input"])
+            if kind == .question { question = askQuestion(obj["tool_input"]) }
         case "PostToolUse": kind = .toolEnd; detail = obj["tool_name"] as? String
         case "PostToolUseFailure": kind = .toolFailed; detail = toolLabel(obj["tool_name"] as? String ?? "tool", obj["tool_input"])
-        case "PermissionRequest": kind = .permission; detail = toolLabel(obj["tool_name"] as? String ?? "tool", obj["tool_input"])
+        case "PermissionRequest":
+            // Some builds route AskUserQuestion through a permission check; it is still a question.
+            if obj["tool_name"] as? String == "AskUserQuestion" { kind = .question; question = askQuestion(obj["tool_input"]) }
+            else { kind = .permission }
+            detail = toolLabel(obj["tool_name"] as? String ?? "tool", obj["tool_input"])
         case "Notification":
             let t = obj["notification_type"] as? String ?? ""
             let msg = (obj["message"] as? String).map { clip($0) }
@@ -80,6 +104,8 @@ public enum HookParser {
         var ev = AgentEvent(agent: agent, sessionId: sid, kind: kind, source: .hook,
                             time: parseDate(obj["_ts"]) ?? Date())
         ev.detail = detail
+        ev.question = question
+        if let m = obj["last_assistant_message"] as? String, !m.isEmpty { ev.message = speechClip(m) }
         ev.cwd = obj["cwd"] as? String
         ev.model = obj["model"] as? String
         ev.transcriptPath = obj["transcript_path"] as? String
@@ -148,8 +174,14 @@ public final class ClaudeTranscriptParser {
             }
             for part in msg["content"] as? [[String: Any]] ?? [] {
                 if part["type"] as? String == "tool_use" {
-                    var e = ev(.toolStart); e.model = model
-                    e.detail = toolLabel(part["name"] as? String ?? "tool", part["input"]); out.append(e)
+                    let asks = part["name"] as? String == "AskUserQuestion"
+                    var e = ev(asks ? .question : .toolStart); e.model = model
+                    e.detail = toolLabel(part["name"] as? String ?? "tool", part["input"])
+                    if asks { e.question = askQuestion(part["input"]) }
+                    out.append(e)
+                } else if part["type"] as? String == "text", let t = part["text"] as? String,
+                          !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    var e = ev(.meta); e.model = model; e.message = speechClip(t); out.append(e)
                 }
             }
             if out.isEmpty, model != nil { var e = ev(.meta); e.model = model; out.append(e) }
@@ -208,6 +240,10 @@ public final class CodexRolloutParser {
                 return [e]
             case "custom_tool_call_output", "function_call_output":
                 return [ev(.toolEnd)]
+            case "message" where p["role"] as? String == "assistant":
+                let text = (p["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n")
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+                var e = ev(.meta); e.message = speechClip(text); return [e]
             default: return []
             }
         case "event_msg":

@@ -1,8 +1,8 @@
 // agentcats-hook <claude|codex>
 //
 // Registered as a command hook. Reads the hook JSON from stdin, tags it with the agent's pid/tty,
-// and hands it to Agent Cats over a local socket. It never blocks or changes the agent:
-// it prints nothing, always exits 0, and spools to a file if the app is not running.
+// Ordinary events are observation-only. With --approvals, Claude PermissionRequest
+// waits for a user decision. Unavailable/expired connections fall through to the agent.
 import Darwin
 import Foundation
 
@@ -11,6 +11,8 @@ let input = FileHandle.standardInput.readDataToEndOfFile()
 guard var obj = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any] else { exit(0) }
 
 obj["_agent"] = agent
+obj["_waitForDecision"] = CommandLine.arguments.contains("--approvals")
+let interactive = ApprovalProtocol.supports(obj)
 if let a = ProcInfo.agentAncestor(from: getppid()) {
     obj["_pid"] = Int(a.pid)
     if let t = ProcInfo.tty(a.pid) { obj["_tty"] = t }
@@ -43,9 +45,24 @@ func send(_ data: Data, to path: String) -> Bool {
     guard rc == 0 else { return false }
     let wrote = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
     guard wrote == data.count else { return false }
-    shutdown(fd, SHUT_WR)
+    if !interactive { shutdown(fd, SHUT_WR) }
+    if interactive {
+        tv.tv_sec = Int(ApprovalProtocol.timeout + 3)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+    }
     var buf = [UInt8](repeating: 0, count: 4096)
-    _ = read(fd, &buf, buf.count)   // wait for the ack (Phase 4: permission decisions come back here)
+    var response = Data()
+    while response.count < 65536 {
+        let n = read(fd, &buf, buf.count)
+        if n < 0 && errno == EINTR { continue }
+        if n <= 0 { break }
+        response.append(buf, count: n)
+        if response.contains(0x0A) { break }
+    }
+    if interactive, let valid = ApprovalProtocol.validatedResponse(response) {
+        FileHandle.standardOutput.write(valid)
+        FileHandle.standardOutput.write(Data([0x0A]))
+    }
     return true
 }
 
@@ -62,5 +79,9 @@ func spool(_ data: Data) {
     flock(fd, LOCK_UN)
 }
 
-if !send(line, to: Paths.socket) { spool(line) }
+if !send(line, to: Paths.socket) {
+    // Spool is telemetry only; never resurrect an approval after the hook has exited.
+    obj["_waitForDecision"] = false
+    if var event = try? JSONSerialization.data(withJSONObject: obj) { event.append(0x0A); spool(event) }
+}
 exit(0)

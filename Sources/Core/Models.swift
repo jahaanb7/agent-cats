@@ -20,6 +20,19 @@ public enum CatState: String, Codable, Sendable {
     /// Needs the user right now (drives fade, ordering, urgent alerts).
     public var needsAttention: Bool { self == .permission || self == .question || self == .error }
 
+    public var displayLabel: String {
+        switch self {
+        case .permission: return "Needs your OK"
+        case .question: return "Waiting for your answer"
+        case .error: return "Hit an error"
+        case .working: return "Working"
+        case .thinking: return "Thinking"
+        case .done: return "Done"
+        case .idle: return "Idle"
+        case .gone: return "Session ended"
+        }
+    }
+
     var sortRank: Int {
         switch self {
         case .permission: return 0
@@ -51,6 +64,19 @@ public struct RateLimit: Codable, Equatable, Sendable {
     public var resetsAt: Date?
 }
 
+/// A multiple-choice question the agent asked (Claude's AskUserQuestion). Only the first question is kept.
+public struct AgentQuestion: Equatable, Sendable {
+    public var text: String
+    public var options: [String]
+    /// How many further questions follow in the same prompt (answered in the terminal).
+    public var more: Int
+    /// Multi-select questions toggle options with digits instead of submitting.
+    public var multiSelect: Bool
+    public init(text: String, options: [String], more: Int = 0, multiSelect: Bool = false) {
+        self.text = text; self.options = options; self.more = more; self.multiSelect = multiSelect
+    }
+}
+
 /// One normalized event from any source (hook, transcript, rollout, process watcher).
 public struct AgentEvent: Sendable {
     public enum Kind: String, Sendable {
@@ -66,6 +92,8 @@ public struct AgentEvent: Sendable {
     public var time: Date
     public var cwd: String?
     public var detail: String?          // tool name + short input, prompt excerpt, error text
+    public var question: AgentQuestion? // full question + options (AskUserQuestion)
+    public var message: String?         // the agent's latest reply text, for the speech bubble
     public var model: String?
     public var pid: Int32?
     public var tty: String?
@@ -102,6 +130,8 @@ public struct Session: Sendable {
     public var stateSince: Date
     public var state: CatState = .idle
     public var activity: String?        // what it is doing right now
+    public var question: AgentQuestion? // set while an AskUserQuestion prompt is open
+    public var lastMessage: String?     // the agent's latest reply text (cleared by a new prompt)
     public var usage = TokenUsage()
     public var contextTokens: Int?
     public var contextWindow: Int?

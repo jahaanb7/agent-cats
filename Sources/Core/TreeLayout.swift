@@ -23,7 +23,7 @@ public struct TreeLayout: Equatable {
 
     // Geometry in art pixels.
     public static let slotW = 30.0, postW = 10.0, basketW = 26.0, pad = 4.0
-    public static let treeH = 56.0, emptyH = 30.0
+    public static let treeH = 44.0, emptyH = 30.0
     public static let scales: [Double] = [1.5, 1.0, 0.5]
 
     /// - Parameters:

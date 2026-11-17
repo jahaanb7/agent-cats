@@ -8,7 +8,7 @@ enum SelfTest {
     }
 
     static func run() -> Bool {
-        hooks(); claudeLog(); codexLog(); timing(); layout(); keys(); installer()
+        hooks(); claudeLog(); codexLog(); timing(); layout(); keys(); installer(); approvals(); visibility(); speech()
         print("\(passes) passed, \(failures) failed")
         return failures == 0
     }
@@ -31,6 +31,8 @@ enum SelfTest {
         check(store.sessions["S1"]!.state.needsAttention, "permission needs attention")
         check(go(hook("PostToolUse", ["tool_name": "Bash"])) == .thinking, "PostToolUse -> thinking")
         check(go(hook("Notification", ["notification_type": "idle_prompt", "message": "Claude is waiting for your input"])) == .question, "idle_prompt -> question")
+        check(go(hook("PreToolUse", ["tool_name": "AskUserQuestion"])) == .question, "question tool waits for user")
+        check(go(hook("PostToolUse", ["tool_name": "AskUserQuestion"])) == .thinking, "answered question resumes thinking")
         check(go(hook("Stop")) == .done, "Stop -> done")
         check(go(hook("SessionEnd", ["reason": "exit"])) == .gone, "SessionEnd -> gone")
         let cx = hook("PreToolUse", ["tool_name": "exec_command", "tool_input": ["cmd": "pytest -q"], "model": "gpt-6-astra"], agent: "codex", sid: "C1")!
@@ -153,6 +155,91 @@ enum SelfTest {
         check(Monitor.claudeKey(transcript: "/h/.claude/projects/-Users-juhi-Claude/abc.jsonl") == "-Users-juhi-Claude", "slug from transcript path")
     }
 
+    static func visibility() {
+        var widget = WidgetVisibility()
+        check(!widget.isExpanded, "widget starts tucked away")
+        widget.update(attention: [])
+        check(!widget.isExpanded, "ordinary session updates do not reveal widget")
+        widget.toggle()
+        check(widget.isExpanded, "pull cord opens widget")
+        widget.update(attention: [])
+        check(widget.isExpanded, "manual opening survives session updates")
+        widget.toggle()
+        check(!widget.isExpanded, "second pull tucks widget away")
+        widget.update(attention: ["request-1"])
+        check(widget.isExpanded, "new notification reveals widget")
+        widget.hide()
+        widget.update(attention: ["request-1"])
+        check(!widget.isExpanded, "dismissed notification does not reopen every refresh")
+        widget.update(attention: ["request-1", "request-2"])
+        check(widget.isExpanded, "new request reveals room after dismissal")
+        widget.update(attention: [])
+        check(!widget.isExpanded, "resolved notification retracts automatic reveal")
+        widget.toggle()
+        widget.update(attention: ["request-3"])
+        widget.update(attention: [])
+        check(widget.isExpanded, "resolution keeps manually opened room visible")
+        widget.hide()
+        check(!widget.isExpanded, "outside click hides manually opened room")
+        widget.show()
+        widget.show()
+        check(widget.isExpanded, "opening app reveals room even when already running")
+    }
+
+    static func approvals() {
+        let store = ApprovalStore()
+        let object: [String: Any] = ["_agent": "claude", "hook_event_name": "PermissionRequest",
+            "_waitForDecision": true, "session_id": "S", "tool_name": "Bash", "tool_input": ["command": "echo hello"]]
+        let first = HookReply()
+        store.add(object, reply: first)
+        check(store.requests.count == 1 && first.pending, "live permission waits for decision")
+        let id = store.requests[0].id
+        check(store.requests[0].input.contains("echo hello"), "approval displays complete tool input")
+        check(store.resolve(id, decision: .allow), "allow accepted for live request")
+        check(!store.resolve(id, decision: .deny), "duplicate/stale decision rejected")
+        let response = try! JSONSerialization.data(withJSONObject: first.response()!)
+        check(ApprovalProtocol.validatedResponse(response) != nil, "allow uses valid Claude response schema")
+        check(!first.complete(ApprovalProtocol.response(.deny)), "completed reply cannot change decision")
+        let second = HookReply()
+        store.add(object, reply: second)
+        check(store.resolve(store.requests[0].id, decision: .deny), "deny accepted")
+        let denied = second.response()!["hookSpecificOutput"] as! [String: Any]
+        check((denied["decision"] as! [String: Any])["behavior"] as? String == "deny", "deny response does not grant permission")
+        let expired = HookReply(timeout: -1)
+        store.add(object, reply: expired)
+        check(store.requests.isEmpty && expired.response()?.isEmpty == true, "expired request falls through without decision")
+        let disconnected = HookReply()
+        store.add(object, reply: disconnected)
+        disconnected.complete([:])
+        check(store.sweep() && store.requests.isEmpty, "disconnected request removed")
+        let cancelled = HookReply()
+        store.add(object, reply: cancelled)
+        store.cancel(session: "S")
+        check(cancelled.response()?.isEmpty == true && store.requests.isEmpty, "session end releases approval to agent")
+        for key in ["_agent", "_waitForDecision", "hook_event_name", "tool_name"] {
+            var unsupported = object
+            unsupported[key] = key == "_agent" ? "codex" : key == "tool_name" ? "AskUserQuestion" : "invalid"
+            let reply = HookReply()
+            store.add(unsupported, reply: reply)
+            check(store.requests.isEmpty && reply.response()?.isEmpty == true, "unsupported approval rejected: " + key)
+        }
+        var malformed = object
+        malformed["tool_input"] = "not an input object"
+        let invalid = HookReply()
+        store.add(malformed, reply: invalid)
+        check(store.requests.isEmpty && invalid.response()?.isEmpty == true, "unreviewable input cannot be approved")
+        let a = HookReply(), b = HookReply()
+        store.add(object, reply: a); store.add(object, reply: b)
+        let ids = store.requests.map(\.id)
+        check(ids.count == 2 && ids[0] != ids[1], "parallel requests have distinct identities")
+        _ = store.resolve(ids[0], decision: .handoff)
+        check(a.response()?.isEmpty == true && b.pending, "handoff resolves only the selected request")
+        store.cancel()
+        check(!b.pending, "shutdown releases all requests")
+        check(ApprovalProtocol.validatedResponse(Data("{}".utf8)) == nil, "empty response makes no decision")
+        check(ApprovalProtocol.validatedResponse(Data("not-json".utf8)) == nil, "malformed response makes no decision")
+    }
+
     static func installer() {
         let existing: [String: Any] = [
             "model": "opus",
@@ -163,6 +250,10 @@ enum SelfTest {
         let hooks = added["hooks"] as? [String: Any] ?? [:]
         let stop = hooks["Stop"] as? [[String: Any]] ?? []
         check(stop.count == 2, "gstack Stop hook kept, ours added")
+        let permission = hooks["PermissionRequest"] as! [[String: Any]]
+        let permissionHook = (permission.last!["hooks"] as! [[String: Any]])[0]
+        check((permissionHook["command"] as? String)?.hasSuffix("claude --approvals") == true, "Claude permission hook opts into responses")
+        check(permissionHook["timeout"] as? Int == 130, "permission timeout includes fallback margin")
         check(hooks.keys.count == HookInstaller.claudeEvents.count, "all events registered")
         check(added["model"] as? String == "opus", "unrelated settings untouched")
         let again = HookInstaller.merged(added, events: HookInstaller.claudeEvents, command: cmd, remove: false)
@@ -186,5 +277,67 @@ enum SelfTest {
         check(jsonObject(added2) != nil && added2.hasPrefix("{\n  \"model\": \"opus\",\n  \"hooks\": {"), "hooks appended when absent")
         let removedOnly = HookInstaller.replacingHooks(in: added2, with: nil)
         check(removedOnly == noHooks, "removing our only hooks restores the file exactly (got \(removedOnly.debugDescription))")
+    }
+
+    static func speech() {
+        // AskUserQuestion: the question and its options reach the session, then clear once answered.
+        let store = SessionStore()
+        let first: [String: Any] = ["question": "Which database should we use?", "options": [["label": "Postgres"], ["label": "SQLite"]]]
+        let ask: [String: Any] = ["questions": [first]]
+        store.apply(hook("UserPromptSubmit", ["prompt": "set up storage"])!)
+        store.apply(hook("PreToolUse", ["tool_name": "AskUserQuestion", "tool_input": ask])!)
+        var s = store.sessions["S1"]!
+        check(s.question == AgentQuestion(text: "Which database should we use?", options: ["Postgres", "SQLite"]), "AskUserQuestion parsed (got \(String(describing: s.question)))")
+        var sp = Speech.make(s, hookPending: false)
+        check(sp.mood == .question && sp.choices.map(\.label) == ["Postgres", "SQLite"], "question bubble offers the options")
+        check(sp.choices.first?.reply == .keys([.text("1")]) && sp.choices.last?.reply == .keys([.text("2")]), "option N types N")
+        check(sp.steps(forText: "MySQL\nplease") == [.text("3"), .pause, .text("MySQL please"), .pause, .returnKey], "free text picks 'type something' then types one line")
+        var multi = s; multi.question?.more = 1
+        check(Speech.make(multi, hookPending: false).choices.map(\.reply) == [.openTerminal], "multi-question prompts go to the terminal")
+        multi = s; multi.question?.multiSelect = true
+        check(Speech.make(multi, hookPending: false).textReply == nil, "multi-select goes to the terminal")
+        var none = s; none.question?.options = []
+        check(Speech.make(none, hookPending: false).choices.map(\.reply) == [.openTerminal], "question without options goes to the terminal")
+        var many = s; many.question?.options = (1...10).map { "o\($0)" }
+        check(Speech.make(many, hookPending: false).choices.map(\.reply) == [.openTerminal], "more than 9 options goes to the terminal")
+        check(Speech.make(s, hookPending: false, canType: false, appName: "Cursor").choices.map(\.label) == ["Answer in Cursor"], "untypeable app offers the jump only")
+        let routed = hook("PermissionRequest", ["tool_name": "AskUserQuestion", "tool_input": ask])!
+        check(routed.kind == .question && routed.question?.options == ["Postgres", "SQLite"], "AskUserQuestion permission check stays a question")
+        store.apply(hook("Notification", ["notification_type": "idle_prompt", "message": "Claude is waiting for your input"])!)
+        check(store.sessions["S1"]!.question != nil, "waiting notification keeps the open question")
+        store.apply(hook("PostToolUse", ["tool_name": "AskUserQuestion"])!)
+        check(store.sessions["S1"]!.question == nil, "answered question clears")
+
+        // Permission: hook waiting -> hook buttons; otherwise keys. Deny text reaches the agent.
+        store.apply(hook("PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "rm -rf build"]])!)
+        s = store.sessions["S1"]!
+        sp = Speech.make(s, hookPending: true)
+        check(sp.choices.map(\.reply) == [.hook(allow: true), .hook(allow: false)] && sp.textReply == .hookDeny, "hook permission bubble")
+        check(Speech.make(s, hookPending: false).choices.map(\.reply) == [.keys([.text("1")]), .keys([.escape])], "terminal permission keys")
+        check(sp.choices.map(\.primary) == [false, true], "destructive command makes Deny the default")
+        check(Speech.make(s, hookPending: true, canType: false).choices.count == 2, "hook answers work even without a terminal")
+        let deny = ApprovalProtocol.response(.deny, message: "use make clean\u{7}")
+        let back = ApprovalProtocol.validatedResponse(try! JSONSerialization.data(withJSONObject: deny))
+        let msg = ((((back.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any])?["hookSpecificOutput"] as? [String: Any])?["decision"] as? [String: Any])?["message"] as? String)
+        check(msg == "The user declined in Agent Cats and said: use make clean", "deny message survives the hook, cleaned (got \(msg ?? "nil"))")
+        check(ApprovalProtocol.response(.deny).description.contains("Denied by the user"), "plain deny unchanged")
+
+        // Finished turn: the agent's last words, with quick Yes/No when it ended on a question.
+        let p = ClaudeTranscriptParser()
+        for e in p.parse(line: #"{"type":"assistant","sessionId":"S1","message":{"id":"z9","model":"m","content":[{"type":"text","text":"Tests pass. Want me to open a PR?"}]}}"#, fallbackSession: "S1") { store.apply(e) }
+        store.apply(hook("Stop")!)
+        s = store.sessions["S1"]!
+        sp = Speech.make(s, hookPending: false)
+        check(sp.mood == .done && sp.text == "Tests pass. Want me to open a PR?", "done bubble shows last reply (got \(sp.text))")
+        check(sp.choices.map(\.label) == ["Yes", "No"], "yes/no offered for a trailing question")
+        check(sp.steps(forText: "  ") == nil, "blank reply sends nothing")
+        store.apply(hook("UserPromptSubmit", ["prompt": "yes"])!)
+        check(store.sessions["S1"]!.lastMessage == nil, "new prompt clears the old reply")
+        check(Speech.typeable("a\u{1b}[2Jb\r\nc") == "a[2Jb c", "escape sequences can't be typed")
+
+        // Codex assistant text.
+        let cp = CodexRolloutParser()
+        let ce = cp.parse(line: #"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done."}]}}"#, fallbackSession: "C9")
+        check(ce.first?.message == "Done.", "codex assistant message")
     }
 }
