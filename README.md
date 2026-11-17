@@ -1,72 +1,127 @@
 # Agent Cats
 
-A native macOS companion that represents running **Claude Code** and **Codex** sessions as pixel-art cats in a little room under the menu bar. It stays tucked away with only a pull rope visible. Click or tug the rope (or click the menu-bar paw) to reveal the room. New permission requests, questions, or errors reveal it automatically. Click a cat and it tells you what it needs in a speech bubble. Answer right there, or double-click the cat to jump to its terminal.
+**A macOS menu-bar companion that turns your running coding agents into cats.**
 
-Status: **Native cat tree and live session dashboard implemented.** Claude Code permission requests can be allowed or denied from the dashboard after installing the updated hooks. Codex approvals and typed answers remain in the agent’s window.
+Every Claude Code and Codex session gets its own pixel-art cat in a small room under the menu bar. Each cat shows what its agent is doing, speaks up when the agent needs you, and lets you reply without leaving the window you're in.
 
-## What works now
+![The Agent Cats room under the menu bar](docs/images/room.png)
 
-- **Retractable room:** wallpaper, an evening window, wooden floor, and animated pixel cats. Click/tug the rope to show or hide it; the × button and a click outside the app also tuck it away. Dismissed alerts stay dismissed until a new attention event arrives. Automatic reveals close when attention clears; manually opened rooms stay open until dismissed. Hidden cats stop their animation timer. Reduced-motion settings skip the reveal animation.
-- **Talking cats:** click a cat and a speech bubble pops out above it. The text types itself out and the cat hops. The bubble shows what the agent wants: its question with the suggested answers as buttons, a permission request with Allow/Deny, or its last reply when it finishes. A text box takes your own answer. Cats speak up on their own when they need permission, ask a question, finish, or hit an error. Questions wait until answered; finished and status bubbles fade after a few seconds. Press Esc or click elsewhere to close.
-  - **Double-click** a cat to jump to its Terminal or iTerm2 tab, or to its app for IDE sessions.
-  - **Right-click** a cat for: What do you need?, Open terminal, Open project folder, and Show details… (the full session dashboard).
-  - **How answers reach the agent:** if a Claude permission request is being held by the hook, the bubble answers the hook directly. Text you type there denies the request and passes your words to Claude. Everything else is typed into the session's own terminal tab, which is found by its tty. iTerm2 receives the text in the background. Terminal.app is brought forward, sent the keys, and then you're returned to your previous app; this needs Accessibility permission, which is requested the first time. Before every key, the app checks that the right tab is still in front. If the tab moved or the agent has already moved on, nothing is typed. Other terminals and IDEs can't have a specific pane targeted, so the bubble asks you to double-click instead.
-- **Live dashboard:** right-click a cat → Show details…, or click the tree / menu-bar paw, to see all sessions, or click the tree / menu-bar paw to see all sessions, including overflow cats. Includes activity history, reported metrics, project-folder access, and a jump to the agent window.
-- **Claude approvals:** review the complete tool input, then Allow once, Deny, or Handle in agent. Each live request has its own identity; disconnected, expired, and already-resolved requests cannot be approved. After two minutes, the hook returns control to the normal agent prompt.
-- **Hook setup:** the dashboard previews the exact settings diff and installs only when you click Install hooks. Existing hooks are preserved and files are backed up. Restart agent sessions afterward.
-- **Attention requests:** permissions and questions stand out in the dashboard. Codex decisions and typed answers still happen in the agent itself.
+<p align="center">
+  <img src="docs/images/bubbles.png" alt="Speech bubbles for a question, a permission request, a finished task and an error" width="720">
+</p>
 
-- **Session detection** for Claude Code (`~/.claude/projects/*/*.jsonl`) and Codex (`~/.codex/sessions/**/rollout-*.jsonl`). Files are followed with FSEvents (no polling) and live `claude`/`codex` processes are matched by launch folder.
-- **Normalized state machine:** idle, thinking, working, permission, question, done, error and gone. Process exits are caught right away with kqueue.
-- **Real metrics only:** tokens (input/output/cache), cache hit rate, model, title, and Claude Code's own cost estimate (`cost-state`). For Codex there are context-window use, 5-hour and weekly rate limits, and plan. Anything an agent doesn't report shows as `–`.
-- **Hook bridge** (`agentcats-hook`). Ordinary events print nothing and spool to disk if the app is unavailable. Claude PermissionRequest hooks installed with `--approvals` wait up to 120 seconds for a user decision and emit only the supported decision JSON. Spool replay never creates actionable approvals. All paths exit 0 so an unavailable bridge falls back to the agent’s normal flow.
-- **Hook installer:** a dry-run diff that edits only the `"hooks"` block, timestamped backups, and a clean uninstall. Existing hooks are kept.
-- **Dynamic tree sizing:** the tree grows by one perch per session.
-  - Up to about 10 cats it stays at full size (1.5pt per art pixel).
-  - With more, it shrinks to 1pt.
-  - Beyond that, calm cats sleep in a "+N" basket.
-  - Cats that need you are never hidden.
+---
 
-## Open the app
+## Features
 
-Open `~/Applications/AgentCats.app` in Finder. Explicitly opening or reopening the app reveals the room; tuck it away with the rope or ×. For a hidden launch, pass `--background` to the executable.
+- **One cat per session.** Cats sit on perches and animate by state: working, thinking, asleep, waiting for you, or done. The room grows with your sessions. When there are many, calm cats sleep in a "+N" basket and cats that need you are never hidden.
+- **Talking cats.** Click a cat for a speech bubble that says what it needs. Questions show the agent's options as buttons, with a text box for your own answer. Permission requests get Allow and Deny. Finished tasks show the agent's last reply.
+- **Cats speak up on their own** when they need permission, ask a question, finish a task, or hit an error. Questions stay on screen until you answer.
+- **Reply without switching windows.** Replies go to the agent through the hook that is waiting on a permission request, or by typing into the session's terminal tab.
+- **Jump to any session.** Double-click a cat to bring its terminal tab forward. Right-click for more options.
+- **Dashboard.** See every session with its activity history, model, token use, cache hit rate, context-window use, and rate limits. Open a session's project folder from here too.
+- **Reviewed approvals.** Claude permission requests show the full tool input before you decide. A request that isn't answered within two minutes falls back to the agent's normal prompt.
+- **Private by design.** Everything stays on your Mac. The app makes no network calls.
 
-If Finder appears to do nothing, double-click `Start Agent Cats.command` in this project folder. It launches the executable from your desktop session and reports startup errors. Diagnostics are saved to `~/Library/Logs/AgentCats/startup.log` and `launch.log`.
+## Requirements
 
-Builds are staged and signed before replacing the runnable bundle, so failed builds preserve the previous app.
+- macOS 14 (Sonoma) or later, on Apple Silicon
+- Xcode Command Line Tools (`xcode-select --install`). Full Xcode is not required.
+- For typing replies into Terminal.app: Accessibility permission for Agent Cats. iTerm2 needs no extra permission.
 
-## Build and try
+## Quick start
 
 ```sh
-./build.sh                       # swiftc only, works with Command Line Tools (no Xcode needed)
-open dist/AgentCats.app          # launch the native widget and dashboard
-./dist/agentcats selftest        # fixture tests
-./Tests/run-socket-tests.sh      # real Unix-socket integration checks
-./Tests/run-room-tests.sh        # native rope/layout checks + room/rope preview PNGs
-./Tests/run-bubble-preview.sh    # renders the speech bubble's moods to dist/bubble-preview.png
-./dist/agentcats watch           # live terminal view of all sessions and the tree layout
-./dist/agentcats sessions --json
-./dist/agentcats layout --width 680
-./dist/agentcats hooks plan      # shows the exact config diff; writes nothing
+git clone https://github.com/jahaanb7/agent-cats.git
+cd agent-cats
+./build.sh
+open dist/AgentCats.app
 ```
 
-Hooks are only written with `./dist/agentcats hooks install --yes`, and `hooks uninstall --yes` removes them again. Without hooks, everything still works from the logs, but permission prompts are detected later.
+Look for the paw icon in the menu bar. Click it, or tug the rope, to pull the room down.
 
-## Layout
+Then start a session with `claude` or `codex` in Terminal or iTerm2. A cat appears within a few seconds.
 
-| Path | What |
+### Turn on hooks (recommended)
+
+Hooks give accurate live state and let Claude permission requests be answered from the cat. To install them, open the dashboard, choose **Set up agent hooks…**, review the diff, and click **Install hooks**. The installer edits only the `hooks` block, keeps your existing hooks, and saves a timestamped backup of each file it changes. Restart any sessions that were already running.
+
+Without hooks, Agent Cats still works from session transcripts. Permission prompts are then detected later, and the Allow and Deny buttons are not available.
+
+## How to use it
+
+| Action | Result |
 |---|---|
-| `Sources/Shared/` | libproc helpers and paths (shared with the hook) |
-| `Sources/Core/` | models, parsers, session store, monitor, socket server, installer, tree layout |
-| `Sources/App/` | AppKit widget, sprite renderer, SwiftUI dashboard, terminal navigation |
-| `Sources/CLI/` | `agentcats` dev CLI and self-tests |
+| Click the rope or the paw | Show or hide the room |
+| Single-click a cat | Open or close its speech bubble |
+| Double-click a cat | Jump to its terminal |
+| Right-click a cat | What do you need? · Open terminal · Open project folder · Show details… |
+| Right-click the room | Pull down cats / Tuck away · Open dashboard · Large cats / Small cats · Quit |
+| `Esc`, or click elsewhere | Close the bubble. An unanswered question stays on its cat. |
+
+### How replies reach the agent
+
+| Situation | How the reply is delivered |
+|---|---|
+| Claude permission request, hooks installed | Allow or Deny answers the waiting hook directly. Text you type is sent to Claude as the reason for the denial. |
+| Claude question with 1–9 options | The matching number is typed into the terminal. Your own text uses the "type something" option. |
+| Anything else | Typed into the session's terminal tab, found by its tty |
+
+Agent Cats types only into Terminal.app and iTerm2, where it can target the exact tab. For other apps and IDEs, the bubble offers to take you there instead. Before typing into Terminal.app, it checks that the moment hasn't changed and that the right tab is in front. If anything differs, nothing is sent.
+
+## Status
+
+Agent Cats is early software.
+
+- Session detection, the room, the dashboard, Claude approvals, and the hook installer are covered by automated tests.
+- Speech bubbles and reply typing pass automated tests and render correctly. The live typing path still needs hands-on testing across Claude Code and Codex versions.
+- Codex approvals don't go through a hook yet. Codex replies from the bubble are typed into its terminal, so `y` and `n` are the keys used for approvals.
+
+## Tests
+
+```sh
+./dist/agentcats selftest             # parsers, state machine, layout, installer, speech logic
+./Tests/run-room-tests.sh             # room layout, rope hit testing, visibility
+./Tests/run-socket-tests.sh           # Unix-socket hook bridge
+./Tests/run-bubble-preview.sh         # renders dist/bubble-preview.png
+```
+
+Developer commands:
+
+```sh
+./dist/agentcats watch                # live terminal view of all sessions
+./dist/agentcats sessions --json
+./dist/agentcats hooks plan           # show the hook diff without writing anything
+./dist/agentcats hooks uninstall --yes
+```
+
+## Troubleshooting
+
+- **Nothing changes after rebuilding.** Agent Cats runs as a single instance. Quit the running copy from the paw menu, or with `killall AgentCats`, and then open the new build.
+- **Startup problems.** Diagnostics are written to `~/Library/Logs/AgentCats/startup.log` and `launch.log`.
+- **Hidden launch.** Pass `--background` to the app's executable.
+
+## How it works
+
+- **Session sources.** Claude Code transcripts (`~/.claude/projects/*/*.jsonl`) and Codex rollouts (`~/.codex/sessions/**/rollout-*.jsonl`) are followed with FSEvents. Running `claude` and `codex` processes are matched to sessions by launch folder, and process exit is detected with kqueue.
+- **Hooks.** `agentcats-hook` passes agent hook events to the app over a Unix socket. Ordinary events are only recorded. Permission requests wait for your decision for up to two minutes. If the app isn't running, events are spooled to disk and the agent carries on as normal.
+- **State.** Each session moves through idle, thinking, working, permission, question, done, error, and gone. Metrics come only from what each agent reports. Anything it doesn't report shows as a dash.
+
+## Project layout
+
+| Path | Contents |
+|---|---|
+| `Sources/Core/` | Models, parsers, session store, speech logic, monitor, socket server, hook installer, layout |
+| `Sources/App/` | AppKit room and cat tree, speech bubble, terminal navigation and typing, dashboard, app delegate |
+| `Sources/Shared/` | Process helpers and the approval protocol, shared by the app and the hook |
 | `Sources/Hook/` | `agentcats-hook` |
-| `Art/cats.json` | sprite source: palette-indexed grids, 8 coats, poses, props |
+| `Sources/CLI/` | `agentcats` developer CLI and self-tests |
+| `Art/cats.json` | Sprite source: palette-indexed pixel grids, coats, poses, and props |
+| `Tests/` | Room, socket, and bubble test harnesses |
+| `docs/images/` | Images used in this README |
 
-Everything stays on your Mac. There are no network calls.
+## Uninstall
 
-## Approval behavior and remaining work
-
-The Claude decision format follows the [official PermissionRequest hook reference](https://code.claude.com/docs/en/hooks#permissionrequest-decision-control). Only an explicit click on a live request produces an allow or deny decision. No permanent permission rules are added. AskUserQuestion answers are typed into the terminal from the cat's bubble (option N types N; your own text picks the "type something" entry first). A CLI-only `watch` listener acknowledges immediately because it has no approval UI. Only one listener can own the socket at a time.
-
-Native room rendering, rope hit testing, tug/accessibility activation, and visibility transitions are tested. Still to verify on an unrestricted desktop: real Unix-socket integration tests, full desktop interaction, and a live Claude permission round trip. This development sandbox denies Unix-socket binding and does not support the menu-bar app lifecycle reliably. Codex decision transport is not implemented; Codex replies from the bubble are typed into its terminal (y/n for approvals). The keystroke mappings for Claude Code's and Codex's terminal UIs still need a live check on a real desktop.
+1. Quit Agent Cats from the paw menu.
+2. Remove the hooks with `./dist/agentcats hooks uninstall --yes`.
+3. Delete the project folder.
