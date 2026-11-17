@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="330" viewBox="0 0 860 330" font-family="-apple-system, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5b6b5f"/>
+    </marker>
+  </defs>
+  <rect width="860" height="330" rx="16" fill="#f4eee0"/>
+  <g stroke="#3d4a40" stroke-width="2" fill="#fbf8f0">
+    <rect x="30" y="40" width="190" height="110" rx="12"/>
+    <rect x="30" y="180" width="190" height="110" rx="12"/>
+    <rect x="335" y="40" width="190" height="110" rx="12"/>
+    <rect x="335" y="180" width="190" height="110" rx="12"/>
+    <rect x="640" y="40" width="190" height="250" rx="12"/>
+  </g>
+  <g fill="#2e3a31" font-size="15" font-weight="700">
+    <text x="125" y="70" text-anchor="middle">Claude Code</text>
+    <text x="125" y="210" text-anchor="middle">Codex</text>
+    <text x="430" y="70" text-anchor="middle">Event sources</text>
+    <text x="430" y="210" text-anchor="middle">Hook bridge</text>
+    <text x="735" y="70" text-anchor="middle">Agent Cats app</text>
+  </g>
+  <g fill="#5b6b5f" font-size="12.5" text-anchor="middle">
+    <text x="125" y="96">transcripts + hooks</text>
+    <text x="125" y="236">rollouts + hooks</text>
+    <text x="430" y="96">FSEvents · kqueue</text>
+    <text x="430" y="236">agentcats-hook</text>
+  </g>
+  <g fill="#2e3a31" font-size="13" text-anchor="middle">
+    <text x="735" y="108">Session store</text>
+    <text x="735" y="150">Room &amp; cats</text>
+    <text x="735" y="192">Speech bubbles</text>
+    <text x="735" y="234">Dashboard</text>
+  </g>
+  <g stroke="#5b6b5f" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <path d="M222 95 H330"/>
+    <path d="M222 235 H330"/>
+    <path d="M527 95 H635"/>
+    <path d="M527 235 H635"/>
+  </g>
+  <g fill="#5b6b5f" font-size="12" text-anchor="middle">
+    <text x="276" y="88">events</text>
+    <text x="276" y="228">events</text>
+    <text x="581" y="88">state</text>
+    <text x="581" y="228">approvals</text>
+  </g>
+  <text x="430" y="310" fill="#5b6b5f" font-size="12" text-anchor="middle">Replies return the same way: a waiting hook answers directly, or keys are typed into the session's terminal tab.</text>
+</svg>

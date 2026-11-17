@@ -103,6 +103,10 @@ Developer commands:
 
 ## How it works
 
+<p align="center">
+  <img src="docs/images/architecture.svg" alt="Architecture: agents send events through hooks and transcript watchers to the Agent Cats app, which drives the room, bubbles and dashboard" width="860">
+</p>
+
 - **Session sources.** Claude Code transcripts (`~/.claude/projects/*/*.jsonl`) and Codex rollouts (`~/.codex/sessions/**/rollout-*.jsonl`) are followed with FSEvents. Running `claude` and `codex` processes are matched to sessions by launch folder, and process exit is detected with kqueue.
 - **Hooks.** `agentcats-hook` passes agent hook events to the app over a Unix socket. Ordinary events are only recorded. Permission requests wait for your decision for up to two minutes. If the app isn't running, events are spooled to disk and the agent carries on as normal.
 - **State.** Each session moves through idle, thinking, working, permission, question, done, error, and gone. Metrics come only from what each agent reports. Anything it doesn't report shows as a dash.
