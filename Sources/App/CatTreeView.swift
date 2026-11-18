@@ -202,7 +202,9 @@ final class CatTreeView: NSView {
         let text: String
         init(_ e: Entry) {
             let s = e.session
-            var t = "\(e.cat) · \(s.project) · \(s.agent.displayName)\n\(Self.label(s.state))"
+            var t = "\(e.cat) · \(s.project) · \(s.agent.displayName)"
+            if let origin = Origins.of(s) { t += " · \(origin.label)" }
+            t += "\n\(Self.label(s.state))"
             if let a = s.activity { t += ": \(a)" }
             if let m = s.model { t += "\n\(m)" }
             text = t

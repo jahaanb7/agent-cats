@@ -39,6 +39,8 @@ Each running agent session gets its own cat. The cat's pose shows what the agent
 - **One cat per session.** Cats sit on perches. Their pose and animation reflect the session's state: working, thinking, waiting for you, done, or asleep. The room grows with your sessions. When there are many, calm sessions doze in a "+N" basket, and cats that need you are never hidden.
 - **Talking cats.** Click a cat to open its bubble. Questions come with the agent's options as buttons and a text box for your own answer. Permission requests get Allow and Deny. Finished tasks show the agent's last reply.
 - **Cats speak up on their own** when they need permission, ask a question, finish a task, or hit an error. If the room is tucked away (or hidden completely), it drops back down with a soft sound and the cat asks you directly, with a text box to reply. A question stays up until you answer it. A turn that ends with a question ("Want me to open a PR?") counts as a question.
+- **Send files and screenshots.** The paperclip in a bubble attaches files, takes a screenshot (drag a region, or press Space for a window), or pastes an image from the clipboard. You can also drop files onto the bubble. They go to the agent as file paths next to your message, just like dragging a file into the terminal.
+- **Know where each session runs.** Every cat is tagged Terminal, editor (VS Code, Cursor…), Claude app, Background (scripts, `claude -p`, the Agent SDK, `codex exec`) or Phone or browser (a session on this Mac being driven remotely). Sessions started in the cloud from the Claude app or claude.ai never reach your Mac, so they don't get a cat.
 - **Reply without switching windows.** Replies go to the agent through the hook that is waiting on a permission request, or by typing into the session's terminal tab.
 - **Jump to any session.** Double-click a cat to bring its terminal tab forward.
 - **Dashboard.** A calm, pixel-art room of its own: every cat on the left, and for the one you pick, what it's doing, anything it's asking (with Allow, Deny and In terminal), token use, cache hit rate, context use, rate limits, and a plain-language activity log.
@@ -102,6 +104,7 @@ Command-line equivalents:
 | Double-click a cat | Jump to its terminal |
 | Right-click a cat | What do you need? · Open terminal · Open project folder · Show details… |
 | Right-click the room | Pull down cats / Tuck away · Open dashboard · Large cats / Small cats · Quit |
+| Paperclip in a bubble, or drop files on it | Attach files, a screenshot, or a pasted image to your reply |
 | `Esc`, or click elsewhere | Close the bubble. An unanswered question stays on its cat. |
 
 The dashboard lists every session with its state and gives full details for the one you select. Use **Show details…** from a cat's menu to open it directly on that session.

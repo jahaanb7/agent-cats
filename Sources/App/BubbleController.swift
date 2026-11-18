@@ -35,6 +35,7 @@ final class BubbleController {
     private let started = Date()
     private var chimed = Set<String>()           // tokens already announced with a sound
     private var fadeGen = 0
+    private var capturing = false                // a screenshot is being taken; its clicks aren't "elsewhere"
 
     init(env: Env) {
         self.env = env
@@ -48,6 +49,14 @@ final class BubbleController {
         model.onSendText = { [weak self] t in self?.sendText(t) }
         model.onOpenTerminal = { [weak self] in self?.openTerminal() }
         model.onNext = { [weak self] in self?.showNext() }
+        model.onChooseFiles = { [weak self] in self?.chooseFiles() }
+        model.onScreenshot = { [weak self] in self?.takeScreenshot() }
+        model.onPasteImage = { [weak self] in
+            guard let self, let url = Attachments.saveClipboardImage() else { return }
+            self.attach([url])
+        }
+        model.onAddFiles = { [weak self] urls in self?.attach(urls) }
+        DispatchQueue.global(qos: .utility).async { Attachments.cleanUp() }
         // Content grows or shrinks (status line, "Sent", wrapped buttons): refit once per run loop.
         watch = model.objectWillChange.sink { [weak self] _ in self?.queuePlace() }
     }
@@ -78,6 +87,7 @@ final class BubbleController {
     /// A click in another app. Returns true when the bubble handled it (the room should stay put).
     func outsideClick() -> Bool {
         guard isOpen else { return false }
+        if capturing { return true }
         // Questions stay until answered; everything else gets out of the way.
         if model.speech?.needsAnswer == true, model.status != .sent { return true }
         close(dismissed: false)
@@ -115,7 +125,7 @@ final class BubbleController {
     private func open(_ id: String, auto: Bool) {
         guard let entry = entries[id], env.catRect(id) != nil else { return }
         pendingClose?.cancel(); pendingClose = nil
-        if sessionID != id { model.draft = "" }
+        if sessionID != id { model.draft = ""; model.attachments = [] }
         sessionID = id
         self.auto = auto
         queue.removeAll { $0 == id }
@@ -192,7 +202,8 @@ final class BubbleController {
         guard auto, let sp = model.speech, !sp.needsAnswer else { return }
         scheduleClose(after: 9) { [weak self] in
             guard let self else { return false }
-            return !self.model.draft.isEmpty || self.panel.isKeyWindow || self.model.status != .idle
+            return !self.model.draft.isEmpty || !self.model.attachments.isEmpty || self.capturing
+                || self.panel.isKeyWindow || self.model.status != .idle
         }
     }
 
@@ -266,7 +277,7 @@ final class BubbleController {
         if isOpen {
             // Only a bubble the cat opened itself, that isn't asking anything and that you aren't
             // using, gives way — and only to something urgent.
-            guard auto, let cur = model.speech, !cur.needsAnswer, model.draft.isEmpty, !panel.isKeyWindow,
+            guard auto, let cur = model.speech, !cur.needsAnswer, model.draft.isEmpty, model.attachments.isEmpty, !capturing, !panel.isKeyWindow,
                   model.status == .idle, s.wantsYou else { return }
         }
         open(next, auto: true)
@@ -288,6 +299,7 @@ final class BubbleController {
             self.panel.alphaValue = 1
             self.model.speech = nil
             self.model.draft = ""
+            self.model.attachments = []
             self.model.status = .idle
             self.model.anim.popped = false
         }
@@ -334,11 +346,63 @@ final class BubbleController {
 
     private func sendText(_ text: String) {
         guard let sp = model.speech else { return }
+        let full = Attachments.reply(text: text, files: model.attachments)
+        guard !full.isEmpty else { return }
         if sp.textReply == .hookDeny {
-            perform(.hook(allow: false), text: text)
-        } else if let steps = sp.steps(forText: text) {
-            perform(.keys(steps), text: text)
+            perform(.hook(allow: false), text: full)
+        } else if let steps = sp.steps(forText: full) {
+            perform(.keys(steps), text: full)
         }
+    }
+
+    // MARK: attachments
+
+    private func attach(_ urls: [URL]) {
+        guard isOpen else { return }
+        for u in urls where !model.attachments.contains(u) { model.attachments.append(u) }
+        // Keep the bubble (and its cursor) up while you're putting a reply together.
+        pendingClose?.cancel(); pendingClose = nil
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    private func chooseFiles() {
+        let id = sessionID
+        let open = NSOpenPanel()
+        open.allowsMultipleSelection = true
+        open.canChooseDirectories = true
+        open.canChooseFiles = true
+        open.prompt = "Attach"
+        open.message = "Choose files to send to the agent"
+        open.level = NSWindow.Level(rawValue: panel.level.rawValue + 1)
+        NSApp.activate(ignoringOtherApps: true)
+        open.begin { [weak self] response in
+            guard let self, response == .OK, self.sessionID == id else { return }
+            self.attach(open.urls)
+        }
+    }
+
+    /// macOS's own interactive capture: drag a region, or press Space to pick a window.
+    /// The bubble steps aside so it isn't in the shot.
+    private func takeScreenshot() {
+        let id = sessionID
+        let url = Attachments.newImageURL("Screenshot")
+        panel.orderOut(nil)
+        capturing = true
+        pendingClose?.cancel(); pendingClose = nil
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        task.arguments = ["-i", "-x", url.path]
+        task.terminationHandler = { _ in
+            DispatchQueue.main.async { [weak self] in
+                // A moment's grace: the click that finished the capture is still being delivered.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self?.capturing = false }
+                guard let self, self.sessionID == id else { return }
+                self.panel.orderFrontRegardless()
+                // Esc during capture leaves no file: nothing to attach.
+                if FileManager.default.fileExists(atPath: url.path) { self.attach([url]) }
+            }
+        }
+        do { try task.run() } catch { capturing = false; panel.orderFrontRegardless() }
     }
 
     private func perform(_ reply: Speech.Reply, text: String?) {
@@ -394,6 +458,7 @@ final class BubbleController {
         model.status = status
         guard status == .sent else { refreshOpenBubble(); return }
         model.draft = ""
+        model.attachments = []
         env.hop(id)
         // The agent usually reacts (token changes → close). If it doesn't visibly, tidy up anyway.
         scheduleClose(after: 4)

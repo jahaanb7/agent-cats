@@ -157,6 +157,17 @@ public struct Speech: Equatable, Sendable {
         return String(String(String.UnicodeScalarView(kept)).trimmingCharacters(in: .whitespaces).prefix(2000))
     }
 
+    /// A reply with files attached: the text, then each path escaped the way Terminal writes a
+    /// dropped file. Claude Code and Codex open such paths as files or images.
+    public static func withFiles(_ text: String, paths: [String]) -> String {
+        let special = Set(" '\"\\()&;|<>$`!*?[]{}#~")
+        let escaped = paths.map { $0.reduce(into: "") { out, ch in
+            if special.contains(ch) { out.append("\\") }
+            out.append(ch)
+        } }
+        return ([text] + escaped).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
     /// Steps for a free-text reply, or nil when this moment takes no typed text.
     public func steps(forText raw: String) -> [KeyStep]? {
         guard case .keys(let prefix)? = textReply else { return nil }

@@ -129,6 +129,9 @@ public final class ClaudeTranscriptParser {
         func ev(_ k: AgentEvent.Kind) -> AgentEvent {
             var e = AgentEvent(agent: .claude, sessionId: sid, kind: k, source: .log, time: time)
             e.cwd = o["cwd"] as? String
+            // A prompt that came in from a phone or browser marks the session as remote-driven.
+            let hints = [o["promptSource"], o["turnOrigin"], (o["origin"] as? [String: Any])?["kind"]].compactMap { $0 as? String }
+            e.entrypoint = hints.contains(where: SessionOrigin.looksRemote) ? "remote" : o["entrypoint"] as? String
             return e
         }
         if (o["isSidechain"] as? Bool) == true { return [] }   // subagent traffic: ignore for state
@@ -223,6 +226,7 @@ public final class CodexRolloutParser {
         case "session_meta":
             var e = ev(.sessionStart); e.cwd = p["cwd"] as? String
             e.detail = p["originator"] as? String
+            e.entrypoint = (p["originator"] as? String) ?? (p["source"] as? String)
             return [e]
         case "turn_context":
             var e = ev(.meta); e.model = p["model"] as? String; e.cwd = p["cwd"] as? String; return [e]

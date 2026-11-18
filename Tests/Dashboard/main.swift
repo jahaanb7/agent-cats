@@ -9,7 +9,7 @@ let now = Date()
 func session(_ id: String, _ state: CatState, _ project: String, _ configure: (inout Session) -> Void = { _ in }) -> Session {
     var s = Session(id: id, agent: .claude, at: now.addingTimeInterval(-3600))
     s.state = state; s.cwd = "/Users/me/Projects/" + project; s.stateSince = now.addingTimeInterval(-40)
-    s.model = "claude-opus-5-5"; s.pid = 42; s.tty = "ttys001"; s.hookSeen = true
+    s.model = "claude-opus-5-5"; s.tty = "ttys001"; s.hookSeen = true; s.entrypoint = "cli"
     configure(&s)
     return s
 }
@@ -22,9 +22,9 @@ let sessions = [
         $0.recent = ["20:41:02 prompt “make the dashboard better”", "20:41:09 toolStart Read Dashboard.swift", "20:41:10 toolEnd",
                      "20:41:31 toolStart Edit Dashboard.swift", "20:41:33 toolEnd", "20:41:40 permission Bash npm run build"]
     },
-    session("b", .working, "reel-claude") { $0.activity = "Bash swift test" },
-    session("c", .done, "scamtest") { $0.lastMessage = "All green. Want me to open a PR?" },
-    session("d", .thinking, "stream") { $0.agent = .codex; $0.model = "gpt-5-codex" },
+    session("b", .working, "reel-claude") { $0.activity = "Bash swift test"; $0.entrypoint = "sdk-cli"; $0.tty = nil },
+    session("c", .done, "scamtest") { $0.lastMessage = "All green. Want me to open a PR?"; $0.entrypoint = "remote" },
+    session("d", .thinking, "stream") { $0.agent = .codex; $0.model = "gpt-5-codex"; $0.entrypoint = "codex_vscode"; $0.tty = nil },
     session("e", .idle, "notes"),
 ]
 let model = DashboardModel()

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Floating panel for the bubble. Unlike the room panel it can become key, so the reply field
 /// takes typing, but it never activates the app (your current app stays in front).
@@ -35,6 +36,8 @@ final class BubbleModel: ObservableObject {
     @Published var cat = ""
     @Published var status: Status = .idle
     @Published var draft = ""
+    /// Files and screenshots going out with the next reply (sent as their paths).
+    @Published var attachments: [URL] = []
     @Published var tailOnTop = true
     @Published var tailX: CGFloat = 150
     /// Bumped whenever a new message should pop in and type out again.
@@ -50,6 +53,10 @@ final class BubbleModel: ObservableObject {
     var onChoice: ((Speech.Choice) -> Void)?
     var onNext: (() -> Void)?
     var onSendText: ((String) -> Void)?
+    var onChooseFiles: (() -> Void)?
+    var onScreenshot: (() -> Void)?
+    var onPasteImage: (() -> Void)?
+    var onAddFiles: (([URL]) -> Void)?
     var onClose: (() -> Void)?
     var onOpenTerminal: (() -> Void)?
 }
@@ -123,6 +130,16 @@ struct BubbleView: View {
                 .opacity(anim.popped ? 1 : 0)
                 .onAppear { start() }
                 .onChange(of: model.generation) { _, _ in start() }
+                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                    guard speech.textReply != nil, model.status != .sent else { return false }
+                    for p in providers {
+                        _ = p.loadObject(ofClass: URL.self) { url, _ in
+                            guard let url, url.isFileURL else { return }
+                            DispatchQueue.main.async { model.onAddFiles?([url]) }
+                        }
+                    }
+                    return true
+                }
                 .environment(\.colorScheme, .light)
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("\(model.cat) says: \(speech.headline). \(speech.text)")
@@ -165,7 +182,9 @@ struct BubbleView: View {
                 FlowButtons(choices: speech.choices, disabled: model.status == .sending) { model.onChoice?($0) }
             }
             if model.status != .sent, speech.textReply != nil {
+                if !model.attachments.isEmpty { attachmentChips }
                 HStack(spacing: 6) {
+                    attachMenu
                     TextField(speech.placeholder, text: $model.draft)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
@@ -179,9 +198,9 @@ struct BubbleView: View {
                     Button(action: send) {
                         Image(systemName: "paperplane.fill").font(.system(size: 12))
                             .foregroundStyle(.white).frame(width: 28, height: 26)
-                            .background(Palette.green.opacity(model.draft.isEmpty ? 0.45 : 1))
+                            .background(Palette.green.opacity(canSend ? 1 : 0.45))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }.buttonStyle(.plain).disabled(model.draft.trimmingCharacters(in: .whitespaces).isEmpty || model.status == .sending)
+                    }.buttonStyle(.plain).disabled(!canSend)
                         .accessibilityLabel("Send reply")
                 }
             }
@@ -210,10 +229,57 @@ struct BubbleView: View {
         }
     }
 
+    private var canSend: Bool {
+        model.status != .sending && (!model.draft.trimmingCharacters(in: .whitespaces).isEmpty || !model.attachments.isEmpty)
+    }
+
     private func send() {
-        let t = model.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, model.status != .sending else { return }
-        model.onSendText?(t)
+        guard canSend else { return }
+        model.onSendText?(model.draft.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Paperclip: pick files, grab a screenshot, or paste an image from the clipboard.
+    private var attachMenu: some View {
+        Menu {
+            Button("Choose Files…", systemImage: "doc") { model.onChooseFiles?() }
+            Button("Take Screenshot…", systemImage: "camera.viewfinder") { model.onScreenshot?() }
+            Button("Paste Image", systemImage: "doc.on.clipboard") { model.onPasteImage?() }
+                .disabled(!Attachments.clipboardHasImage)
+        } label: {
+            Image(systemName: "paperclip").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.soft)
+                .frame(width: 22, height: 26)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(model.status == .sending)
+        .help("Attach files or a screenshot. You can also drop files on the bubble.")
+        .accessibilityLabel("Attach files or a screenshot")
+    }
+
+    private var attachmentChips: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(model.attachments, id: \.self) { url in
+                HStack(spacing: 6) {
+                    if let thumb = Attachments.thumbnail(url) {
+                        Image(nsImage: thumb).resizable().aspectRatio(contentMode: .fill)
+                            .frame(width: 22, height: 22).clipShape(RoundedRectangle(cornerRadius: 4))
+                    } else {
+                        Image(systemName: "doc.fill").font(.system(size: 12)).foregroundStyle(Palette.soft).frame(width: 22, height: 22)
+                    }
+                    Text(url.lastPathComponent).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.ink)
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    Button { model.attachments.removeAll { $0 == url } } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(Palette.soft.opacity(0.8))
+                    }.buttonStyle(.plain).accessibilityLabel("Remove \(url.lastPathComponent)")
+                }
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(Color.white.opacity(0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Palette.line.opacity(0.25), lineWidth: 1))
+            }
+        }
     }
 
     private func color(_ m: Speech.Mood) -> Color {
@@ -292,5 +358,58 @@ private struct FlowButtons: View {
             out[out.count - 1].append(c); width += w + 6
         }
         return out
+    }
+}
+
+/// Where pasted and captured images live, and how attachments are turned into text an agent can open.
+enum Attachments {
+    static var folder: URL {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/AgentCats/attachments", isDirectory: true)
+    }
+
+    static func newImageURL(_ prefix: String) -> URL {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        var url = folder.appendingPathComponent("\(prefix) \(f.string(from: Date())).png")
+        var n = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("\(prefix) \(f.string(from: Date())) \(n).png"); n += 1
+        }
+        return url
+    }
+
+    static var clipboardHasImage: Bool {
+        NSPasteboard.general.canReadObject(forClasses: [NSImage.self], options: nil)
+    }
+
+    /// Saves the clipboard image as a PNG; returns nil when the clipboard holds no image.
+    static func saveClipboardImage() -> URL? {
+        // Copied files come back as their own URLs rather than a re-encoded image.
+        if let urls = NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           let first = urls.first { return first }
+        guard let image = NSImage(pasteboard: .general), let tiff = image.tiffRepresentation,
+              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return nil }
+        let url = newImageURL("Pasted image")
+        do { try png.write(to: url); return url } catch { return nil }
+    }
+
+    static func reply(text: String, files: [URL]) -> String {
+        Speech.withFiles(text, paths: files.map(\.path))
+    }
+
+    static func thumbnail(_ url: URL) -> NSImage? {
+        guard let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image) else { return nil }
+        return NSImage(contentsOf: url)
+    }
+
+    /// Pasted images and screenshots are only needed for a while; clear out week-old ones.
+    static func cleanUp() {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
+        for f in files {
+            let date = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if date < cutoff { try? fm.removeItem(at: f) }
+        }
     }
 }

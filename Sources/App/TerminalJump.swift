@@ -111,3 +111,21 @@ enum TerminalJump {
         return nil
     }
 }
+
+/// Where each session runs (terminal, editor, background…), cached per process.
+enum Origins {
+    private static var hosts: [Int32: (id: String?, name: String?)] = [:]
+
+    static func of(_ s: Session) -> SessionOrigin? {
+        var host: (id: String?, name: String?) = (nil, nil)
+        if let pid = s.pid {
+            if let cached = hosts[pid] { host = cached } else {
+                let app = TerminalJump.owningApp(of: pid)
+                host = (app?.bundleIdentifier, app?.localizedName)
+                if hosts.count > 200 { hosts.removeAll() }
+                hosts[pid] = host
+            }
+        }
+        return s.origin(hostBundleID: host.id, hostName: host.name)
+    }
+}

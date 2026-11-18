@@ -24,6 +24,7 @@ public final class SessionStore {
 
         // Metadata always applies.
         if let c = e.cwd, !c.isEmpty { s.cwd = c }
+        if let ep = e.entrypoint, !ep.isEmpty { s.entrypoint = ep }
         if let m = e.model, !m.isEmpty { s.model = m }
         if let p = e.pid { s.pid = p }
         if let t = e.tty { s.tty = t }

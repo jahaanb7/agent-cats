@@ -91,6 +91,8 @@ public struct AgentEvent: Sendable {
     public var source: Source
     public var time: Date
     public var cwd: String?
+    /// How the agent was started: Claude's "cli" / "sdk-cli", Codex's originator, or "remote".
+    public var entrypoint: String?
     public var detail: String?          // tool name + short input, prompt excerpt, error text
     public var question: AgentQuestion? // full question + options (AskUserQuestion)
     public var message: String?         // the agent's latest reply text, for the speech bubble
@@ -139,6 +141,7 @@ public struct Session: Sendable {
     public var costUSD: Double?         // the agent's own API-equivalent estimate, when it reports one
     public var plan: String?
     public var hookSeen = false         // true once any hook event arrived (accurate states)
+    public var entrypoint: String?      // how it was started (see AgentEvent.entrypoint)
     public var recent: [String] = []    // short activity log, newest last
 
     public var contextPercent: Double? {
@@ -157,9 +160,78 @@ public struct Session: Sendable {
     /// Anything the cat should speak up about and bring the room back for.
     public var wantsYou: Bool { state.needsAttention || asksForReply }
 
+    /// Where this session is running, from what the Mac can see. Cloud sessions started on a
+    /// phone or in a browser never reach this Mac; "remote" means a local session driven from one.
+    public func origin(hostBundleID: String?, hostName: String?) -> SessionOrigin? {
+        SessionOrigin.classify(entrypoint: entrypoint, hasTTY: tty != nil, hostBundleID: hostBundleID, hostName: hostName)
+    }
+
     public static func endsWithQuestion(_ text: String?) -> Bool {
         guard let text else { return false }
         let trailing = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "*_`)\"'\u{201D}"))
         return text.trimmingCharacters(in: trailing).hasSuffix("?")
+    }
+}
+
+/// Where a session runs, as far as this Mac can tell.
+public enum SessionOrigin: Equatable, Sendable {
+    case terminal(String?)   // Terminal, iTerm, Ghostty, Warp…
+    case editor(String)      // VS Code, Cursor, JetBrains, Zed, Xcode…
+    case desktop             // the Claude desktop app
+    case background          // claude -p, the Agent SDK, scripts, codex exec: no window
+    case remote              // a local session being driven from a phone or a browser
+
+    public var label: String {
+        switch self {
+        case .terminal(let app): return app.map { "Terminal · \($0)" } ?? "Terminal"
+        case .editor(let app): return app
+        case .desktop: return "Claude app"
+        case .background: return "Background"
+        case .remote: return "Phone or browser"
+        }
+    }
+
+    /// SF Symbol for the origin.
+    public var symbol: String {
+        switch self {
+        case .terminal: return "terminal"
+        case .editor: return "chevron.left.forwardslash.chevron.right"
+        case .desktop: return "macwindow"
+        case .background: return "gearshape.2"
+        case .remote: return "iphone"
+        }
+    }
+
+    static let terminals: [String: String] = [
+        "com.apple.Terminal": "Terminal", "com.googlecode.iterm2": "iTerm", "com.mitchellh.ghostty": "Ghostty",
+        "dev.warp.Warp-Stable": "Warp", "com.github.wez.wezterm": "WezTerm", "net.kovidgoyal.kitty": "kitty",
+        "org.alacritty": "Alacritty", "co.zeit.hyper": "Hyper", "org.tabby": "Tabby",
+    ]
+    static let editors: [String: String] = [
+        "com.microsoft.VSCode": "VS Code", "com.microsoft.VSCodeInsiders": "VS Code", "com.todesktop.230313mzl4w4u92": "Cursor",
+        "com.exafunction.windsurf": "Windsurf", "dev.zed.Zed": "Zed", "com.apple.dt.Xcode": "Xcode",
+    ]
+
+    /// Words that only show up when a session is being driven from outside this Mac.
+    public static func looksRemote(_ value: String) -> Bool {
+        let v = value.lowercased()
+        return ["remote", "mobile", "phone", "ios", "android", "web", "bridge"].contains { v.contains($0) }
+    }
+
+    public static func classify(entrypoint: String?, hasTTY: Bool, hostBundleID: String?, hostName: String?) -> SessionOrigin? {
+        let ep = entrypoint?.lowercased() ?? ""
+        if ep == "remote" || looksRemote(ep) { return .remote }
+        // Scripted runs count as background even when a terminal started them.
+        if ep.hasPrefix("sdk") || ep.contains("exec") { return .background }
+        if let id = hostBundleID {
+            if let name = terminals[id] { return .terminal(name) }
+            if let name = editors[id] { return .editor(name) }
+            if id.hasPrefix("com.jetbrains.") { return .editor(hostName ?? "JetBrains") }
+            if id.hasPrefix("com.anthropic.") { return .desktop }
+        }
+        if ep.contains("vscode") { return .editor("VS Code") }
+        if hasTTY { return .terminal(hostName) }
+        if hostBundleID == nil && !ep.isEmpty { return .background }   // known agent, no window anywhere
+        return hostName.map { .editor($0) }
     }
 }

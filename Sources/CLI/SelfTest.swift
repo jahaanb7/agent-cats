@@ -338,6 +338,21 @@ enum SelfTest {
         store.apply(hook("UserPromptSubmit", ["prompt": "yes"])!)
         check(store.sessions["S1"]!.lastMessage == nil, "new prompt clears the old reply")
         check(Speech.typeable("a\u{1b}[2Jb\r\nc") == "a[2Jb c", "escape sequences can't be typed")
+        let attached = Speech.withFiles("look at this", paths: ["/Users/me/Shot 1 (2).png", "/tmp/a.txt"])
+        check(attached == #"look at this /Users/me/Shot\ 1\ \(2\).png /tmp/a.txt"#, "attachments go out as escaped paths (got \(attached))")
+        check(Speech.withFiles("", paths: ["/tmp/x.png"]) == "/tmp/x.png", "a file alone is a valid reply")
+        check(Speech(mood: .question, headline: "", text: "", choices: [], textReply: .keys(prefix: []), placeholder: "", token: "t")
+                .steps(forText: attached)?.contains(.text(attached)) == true, "escaped paths survive typing cleanup")
+
+        // Where a session runs.
+        check(SessionOrigin.classify(entrypoint: "cli", hasTTY: true, hostBundleID: "com.googlecode.iterm2", hostName: "iTerm2") == .terminal("iTerm"), "iTerm session is a terminal one")
+        check(SessionOrigin.classify(entrypoint: "sdk-cli", hasTTY: true, hostBundleID: "com.apple.Terminal", hostName: nil) == .background, "scripted run is background")
+        check(SessionOrigin.classify(entrypoint: "cli", hasTTY: false, hostBundleID: "com.todesktop.230313mzl4w4u92", hostName: "Cursor") == .editor("Cursor"), "Cursor session is an editor one")
+        check(SessionOrigin.classify(entrypoint: "codex_vscode", hasTTY: false, hostBundleID: nil, hostName: nil) == .editor("VS Code"), "Codex VS Code originator")
+        check(SessionOrigin.classify(entrypoint: "remote", hasTTY: true, hostBundleID: "com.apple.Terminal", hostName: nil) == .remote, "remote-driven session")
+        check(SessionOrigin.classify(entrypoint: nil, hasTTY: false, hostBundleID: nil, hostName: nil) == nil, "unknown origin stays unknown")
+        let remoteLine = #"{"type":"user","sessionId":"R1","entrypoint":"cli","promptSource":"remote_control","message":{"role":"user","content":"hi"}}"#
+        check(ClaudeTranscriptParser().parse(line: Substring(remoteLine), fallbackSession: "R1").first?.entrypoint == "remote", "a prompt from a phone or browser marks the session remote")
 
         // Codex assistant text.
         let cp = CodexRolloutParser()

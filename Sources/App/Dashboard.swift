@@ -244,6 +244,31 @@ struct StateChip: View {
     }
 }
 
+/// Where a session runs: a small stamped tag (terminal, editor, background, phone or browser).
+struct OriginTag: View {
+    let origin: SessionOrigin
+    var large = false
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: origin.symbol).font(.system(size: large ? 10 : 9, weight: .bold))
+            Text(origin.label.uppercased()).font(Pix.mono(large ? 9 : 8, .heavy)).lineLimit(1)
+        }
+        .foregroundStyle(origin == .remote ? Pix.orange : Pix.forest)
+        .padding(.horizontal, 5).padding(.vertical, 2)
+        .overlay(PixelBox(step: 1.5).strokeBorder((origin == .remote ? Pix.orange : Pix.forest).opacity(0.55), lineWidth: 1))
+        .help(help)
+    }
+    private var help: String {
+        switch origin {
+        case .terminal: return "Running in a terminal window on this Mac."
+        case .editor: return "Running inside an editor on this Mac."
+        case .desktop: return "Running in the Claude desktop app."
+        case .background: return "Running in the background (a script, claude -p, the Agent SDK or codex exec). There's no window to jump to."
+        case .remote: return "A session on this Mac that's being driven from your phone or a browser."
+        }
+    }
+}
+
 /// One of the room's cats, crisp at any size, animated at the room's 6 fps.
 struct PixelCat: View {
     let entry: CatTreeView.Entry
@@ -416,6 +441,7 @@ struct DashboardView: View {
                         }
                     }
                     Text(s.project).font(.system(size: 11)).foregroundStyle(Pix.soft).lineLimit(1)
+                    if let origin = Origins.of(s) { OriginTag(origin: origin) }
                 }
                 Spacer(minLength: 0)
             }
@@ -491,8 +517,11 @@ struct DashboardView: View {
                 }
                 Text(s.title ?? s.project).font(.system(size: 14, weight: .semibold)).foregroundStyle(Pix.ink)
                     .lineLimit(2).textSelection(.enabled)
-                Text([s.agent.displayName, s.model, s.activity].compactMap { $0 }.joined(separator: "  ·  "))
-                    .font(.system(size: 11)).foregroundStyle(Pix.soft).lineLimit(1).truncationMode(.middle)
+                HStack(spacing: 8) {
+                    if let origin = Origins.of(s) { OriginTag(origin: origin, large: true) }
+                    Text([s.agent.displayName, s.model, s.activity].compactMap { $0 }.joined(separator: "  ·  "))
+                        .font(.system(size: 11)).foregroundStyle(Pix.soft).lineLimit(1).truncationMode(.middle)
+                }
                 HStack(spacing: 8) {
                     Button("OPEN TERMINAL") { TerminalJump.open(s) }
                         .disabled(s.pid == nil && s.tty == nil)
