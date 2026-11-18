@@ -180,6 +180,8 @@ final class CatRoomView: NSView {
     private let tuck = NSButton(title: "×", target: nil, action: nil)
     var onDashboard: (() -> Void)?
     var onHide: (() -> Void)?
+    var onHideCompletely: (() -> Void)?
+    private var pendingHide: DispatchWorkItem?
     private var treeSize = NSSize.zero
     private var expanded = false
 
@@ -206,7 +208,7 @@ final class CatRoomView: NSView {
             .foregroundColor: title.textColor!, .font: NSFont.systemFont(ofSize: 20)
         ])
         tuck.target = self; tuck.action = #selector(hideRoom)
-        tuck.toolTip = "Tuck away until the next notification"
+        tuck.toolTip = "Tuck away · double-click to hide completely"
         tuck.setAccessibilityLabel("Hide Agent Cats room")
         backdrop.addSubview(tuck)
         addSubview(rope)
@@ -273,5 +275,18 @@ final class CatRoomView: NSView {
     }
 
     @objc private func openDashboard() { onDashboard?() }
-    @objc private func hideRoom() { onHide?() }
+    /// × tucks the room away; a double-click on it hides Agent Cats completely. The single-click
+    /// action waits a moment, since the × is gone from under the cursor once the room tucks away.
+    @objc private func hideRoom() {
+        if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+            pendingHide?.cancel(); pendingHide = nil
+            onHideCompletely?()
+            return
+        }
+        guard NSApp.currentEvent?.type == .leftMouseUp else { onHide?(); return }   // keyboard / accessibility
+        pendingHide?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.pendingHide = nil; self?.onHide?() }
+        pendingHide = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + min(NSEvent.doubleClickInterval, 0.3), execute: work)
+    }
 }

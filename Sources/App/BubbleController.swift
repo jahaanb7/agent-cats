@@ -93,6 +93,7 @@ final class BubbleController {
             spoken[id] = nil
         }
         pendingClose?.cancel(); pendingClose = nil
+        if let id = sessionID { releaseHook(id) }
         sessionID = nil
         fadeOut()
         DispatchQueue.main.async { [weak self] in
@@ -101,6 +102,14 @@ final class BubbleController {
             for e in self.entries.values { self.considerSpeaking(e.session) }
             self.speakNext()
         }
+    }
+
+    /// A permission request still waiting on this bubble goes back to the terminal's own prompt,
+    /// so closing the bubble never leaves Claude stuck waiting for the cat.
+    private func releaseHook(_ id: String) {
+        guard model.speech?.textReply == .hookDeny, model.status != .sent, model.status != .sending,
+              let request = env.pendingApproval(id) else { return }
+        env.decide(request, .handoff, nil) { _ in }
     }
 
     private func open(_ id: String, auto: Bool) {
@@ -373,6 +382,9 @@ final class BubbleController {
                 case .failed(let why): self.finishSend(.failed(why), id: id)
                 }
             }
+        case .handoff:
+            guard let request = env.pendingApproval(id) else { openTerminal(); return }
+            env.decide(request, .handoff, nil) { [weak self] _ in self?.openTerminal() }
         case .openTerminal:
             break
         }

@@ -312,10 +312,10 @@ enum SelfTest {
         store.apply(hook("PermissionRequest", ["tool_name": "Bash", "tool_input": ["command": "rm -rf build"]])!)
         s = store.sessions["S1"]!
         sp = Speech.make(s, hookPending: true)
-        check(sp.choices.map(\.reply) == [.hook(allow: true), .hook(allow: false)] && sp.textReply == .hookDeny, "hook permission bubble")
+        check(sp.choices.map(\.reply) == [.hook(allow: true), .hook(allow: false), .handoff] && sp.textReply == .hookDeny, "hook permission bubble: Allow, Deny, In terminal, and a chat box")
         check(Speech.make(s, hookPending: false).choices.map(\.reply) == [.keys([.text("1")]), .keys([.escape])], "terminal permission keys")
-        check(sp.choices.map(\.primary) == [false, true], "destructive command makes Deny the default")
-        check(Speech.make(s, hookPending: true, canType: false).choices.count == 2, "hook answers work even without a terminal")
+        check(sp.choices.map(\.primary) == [false, true, false], "destructive command makes Deny the default")
+        check(Speech.make(s, hookPending: true, canType: false).choices.count == 3, "hook answers work even without a terminal")
         let deny = ApprovalProtocol.response(.deny, message: "use make clean\u{7}")
         let back = ApprovalProtocol.validatedResponse(try! JSONSerialization.data(withJSONObject: deny))
         let msg = ((((back.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any])?["hookSpecificOutput"] as? [String: Any])?["decision"] as? [String: Any])?["message"] as? String)

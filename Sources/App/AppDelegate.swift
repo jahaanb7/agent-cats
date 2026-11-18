@@ -58,11 +58,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         get { UserDefaults.standard.object(forKey: "scale") as? Double ?? 1.5 }
         set { UserDefaults.standard.set(newValue, forKey: "scale") }
     }
-    /// Gone mode: when tucked away, even the rope disappears. A cat that needs you still pops up.
-    private var ropeHidden: Bool {
-        get { UserDefaults.standard.bool(forKey: "ropeHidden") }
-        set { UserDefaults.standard.set(newValue, forKey: "ropeHidden") }
-    }
+    /// Gone: a double-click on the rope or × hid everything, rope included. A cat that needs you
+    /// still pops up (and goes again afterwards); the paw in the menu bar brings everything back.
+    private var ropeHidden = false
     private var soundOn: Bool {
         get { UserDefaults.standard.object(forKey: "soundOn") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "soundOn") }
@@ -70,10 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         StartupLog.write("Application launch delegate entered")
+        UserDefaults.standard.removeObject(forKey: "ropeHidden")   // was a sticky setting in 0.3.1
         guard let url = Bundle.main.url(forResource: "cats", withExtension: "json"), let book = SpriteBook(url: url) else {
             NSLog("AgentCats: missing cats.json"); NSApp.terminate(nil); return
         }
         panel = TreePanel()
+        dashboard.model.book = book
         tree = CatTreeView(book: book)
         tree.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         bubble = BubbleController(env: .init(
@@ -95,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: "Agent Cats")
         statusItem.button?.target = self
-        statusItem.button?.action = #selector(toggleRoom)
+        statusItem.button?.action = #selector(pawClicked)
         tree.onRightClick = { [weak self] e in self?.showMenu(e) }
         room = CatRoomView(tree: tree)
         room.rope.onPull = { [weak self] in self?.toggleRoom() }
@@ -103,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         room.rope.reduceMotion = tree.reduceMotion
         room.onDashboard = { [weak self] in self?.showDashboard() }
         room.onHide = { [weak self] in self?.hideRoom() }
+        room.onHideCompletely = { [weak self] in self?.vanish() }
         panel.contentView = room
         panel.alphaValue = 1
         if !CommandLine.arguments.contains("--background") { visibility.show() }
@@ -114,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Clicking in another app dismisses the bubble first, then the room.
             if self.bubble.outsideClick() { return }
             guard self.visibility.isExpanded, !self.panel.frame.contains(NSEvent.mouseLocation) else { return }
-            self.hideRoom()
+            self.dismissRoom()
         }
 
         monitor.acceptsApprovals = true
@@ -275,8 +276,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func toggleRoom() { visibility.toggle(); presentRoom() }
-    private func hideRoom() { visibility.hide(); presentRoom() }
+    /// Rope click, × or menu: open the room, or tuck it back to the rope (which stays visible).
+    @objc private func toggleRoom() {
+        if visibility.isExpanded { hideRoom() } else { visibility.show(); presentRoom() }
+    }
+    private func hideRoom() { ropeHidden = false; visibility.hide(); presentRoom() }
+    /// Clicking elsewhere: get out of the way, but stay gone if you had hidden everything.
+    private func dismissRoom() { visibility.hide(); presentRoom() }
+
+    /// The paw always gets you back: it undoes "hide completely" and opens the room.
+    @objc private func pawClicked() {
+        if ropeHidden { ropeHidden = false; visibility.show(); presentRoom() } else { toggleRoom() }
+    }
 
     /// Double-click on the rope: tuck away and disappear completely. Click the paw to bring it back.
     private func vanish() {
@@ -285,10 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presentRoom()
     }
 
-    @objc private func toggleRopeHidden() {
-        ropeHidden.toggle()
-        presentRoom()
-    }
+    @objc private func hideCompletely() { vanish() }
 
     @objc private func toggleSound() {
         soundOn.toggle()
@@ -329,13 +337,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let toggle = NSMenuItem(title: visibility.isExpanded ? "Tuck away" : "Pull down cats", action: #selector(toggleRoom), keyEquivalent: "")
         toggle.target = self
         m.addItem(toggle)
+        if !visibility.isExpanded || ropeHidden { toggle.action = #selector(pawClicked) }
         let open = NSMenuItem(title: "Open dashboard", action: #selector(showDashboard), keyEquivalent: "")
         open.target = self
         m.addItem(open)
         m.addItem(.separator())
-        let gone = NSMenuItem(title: "Hide completely when tucked away", action: #selector(toggleRopeHidden), keyEquivalent: "")
-        gone.target = self; gone.state = ropeHidden ? .on : .off
-        gone.toolTip = "Even the rope disappears. A cat that needs you still pops up. Double-click the rope to turn this on."
+        let gone = NSMenuItem(title: "Hide completely (double-click rope or ×)", action: #selector(hideCompletely), keyEquivalent: "")
+        gone.target = self
+        gone.toolTip = "Even the rope disappears. A cat that needs you still pops up. Click the paw to bring it back."
         m.addItem(gone)
         let sound = NSMenuItem(title: "Play a sound when a cat asks", action: #selector(toggleSound), keyEquivalent: "")
         sound.target = self; sound.state = soundOn ? .on : .off

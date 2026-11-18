@@ -15,6 +15,7 @@ public struct Speech: Equatable, Sendable {
 
     public enum Reply: Equatable, Sendable {
         case hook(allow: Bool)   // answer the waiting PermissionRequest hook (no typing)
+        case handoff             // release the waiting hook so the terminal shows its own prompt
         case keys([KeyStep])     // type into the session's terminal
         case openTerminal
     }
@@ -78,7 +79,8 @@ public struct Speech: Equatable, Sendable {
             if hookPending {
                 return Speech(mood: .permission, headline: risky ? "Careful! Run this?" : "Can I run this?", text: what,
                               choices: [.init(label: "Allow", reply: .hook(allow: true), primary: !risky),
-                                        .init(label: "Deny", reply: .hook(allow: false), primary: risky)],
+                                        .init(label: "Deny", reply: .hook(allow: false), primary: risky),
+                                        .init(label: "In terminal", reply: .handoff)],
                               textReply: .hookDeny, placeholder: "Or say what to do instead…", token: token)
             }
             // Claude Code: "1" = Yes, Esc = No. Codex: "y" / "n".

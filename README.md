@@ -41,7 +41,11 @@ Each running agent session gets its own cat. The cat's pose shows what the agent
 - **Cats speak up on their own** when they need permission, ask a question, finish a task, or hit an error. If the room is tucked away (or hidden completely), it drops back down with a soft sound and the cat asks you directly, with a text box to reply. A question stays up until you answer it. A turn that ends with a question ("Want me to open a PR?") counts as a question.
 - **Reply without switching windows.** Replies go to the agent through the hook that is waiting on a permission request, or by typing into the session's terminal tab.
 - **Jump to any session.** Double-click a cat to bring its terminal tab forward.
-- **Dashboard.** See every session's activity history, model, token use, cache hit rate, context-window use, and rate limits, with the project folder one click away.
+- **Dashboard.** A calm, pixel-art room of its own: every cat on the left, and for the one you pick, what it's doing, anything it's asking (with Allow, Deny and In terminal), token use, cache hit rate, context use, rate limits, and a plain-language activity log.
+
+<p align="center">
+  <img src="docs/images/dashboard.png" alt="The Agent Cats dashboard: a list of pixel cats on the left, and the selected cat asking to run npm run build, with usage tiles and an activity log" width="720">
+</p>
 - **Reviewed approvals.** A Claude permission request shows the complete tool input before you decide. A request left unanswered for two minutes falls back to the agent's normal prompt.
 - **Private by design.** Everything stays on your Mac. The app makes no network calls.
 
@@ -92,7 +96,8 @@ Command-line equivalents:
 | Action | Result |
 |---|---|
 | Click the paw or tug the rope | Show or hide the room |
-| Double-click the rope | Hide Agent Cats completely, rope included. A cat that needs you still pops up; click the paw to bring it back |
+| Click the rope or × | Tuck the room away; the rope stays |
+| Double-click the rope or × | Hide Agent Cats completely, rope included. A cat that needs you still pops up; click the paw to bring it back |
 | Single-click a cat | Open or close its speech bubble |
 | Double-click a cat | Jump to its terminal |
 | Right-click a cat | What do you need? · Open terminal · Open project folder · Show details… |
@@ -105,7 +110,7 @@ The dashboard lists every session with its state and gives full details for the 
 
 | Situation | What happens |
 |---|---|
-| Claude permission request, with hooks installed | Allow or Deny answers the waiting hook directly. Text you type is sent to Claude as the reason for a denial. |
+| Claude permission request, with hooks installed | Allow or Deny answers the waiting hook directly. Text you type is sent to Claude as the reason for a denial. **In terminal**, or closing the bubble, hands the request back to the terminal's own prompt straight away. |
 | Claude question with 1–9 options | The matching number is typed into the terminal. Your own text is entered through the "type something" option. |
 | Questions with several parts, multi-select, or more than 9 options | The bubble offers **Answer in terminal** so you can use the terminal's own picker. |
 | Anything else | The text is typed into the session's terminal tab, which is found by its tty. |
@@ -117,7 +122,6 @@ Typing is limited to Terminal.app and iTerm2, where Agent Cats can target the ex
 | Item | Location |
 |---|---|
 | Cat size | Right-click the room → Large cats / Small cats |
-| Hide completely when tucked away | Right-click the room, or double-click the rope |
 | Pop-up sound | Right-click the room → Play a sound when a cat asks |
 | Hook configuration | `~/.claude/settings.json`, `~/.codex/hooks.json` |
 | Hook backups | `~/Library/Application Support/AgentCats/backups/` |
@@ -151,6 +155,7 @@ Session data is read from the agents' own files. Agent Cats doesn't keep a separ
 ./dist/agentcats selftest              # 120 checks: parsers, state, layout, installer, speech logic
 ./Tests/run-room-tests.sh              # room layout, rope hit testing, visibility
 ./Tests/run-socket-tests.sh            # Unix-socket hook bridge
+./Tests/run-dashboard-preview.sh       # renders dist/dashboard-preview.png (--empty, --no-hooks)
 ./Tests/run-bubble-preview.sh          # renders dist/bubble-preview.png
 ```
 
