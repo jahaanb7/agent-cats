@@ -91,7 +91,8 @@ public final class SessionStore {
             let quiet = now.timeIntervalSince(s.lastEventAt)
             var next = s.state
             switch s.state {
-            case .done where since > timing.doneToIdle: next = .idle
+            // A turn that ended on a question keeps waiting for your answer.
+            case .done where since > timing.doneToIdle && !s.asksForReply: next = .idle
             case .error where since > timing.errorToIdle: next = .idle
             case .working, .thinking:
                 if quiet > timing.stalledToIdle { next = .idle }
@@ -139,7 +140,7 @@ public final class SessionStore {
     /// Stable display order: sessions needing you first, then by start time (so cats don't shuffle).
     public var ordered: [Session] {
         sessions.values.sorted {
-            if $0.state.needsAttention != $1.state.needsAttention { return $0.state.needsAttention }
+            if $0.wantsYou != $1.wantsYou { return $0.wantsYou }
             if $0.startedAt != $1.startedAt { return $0.startedAt < $1.startedAt }
             return $0.id < $1.id
         }

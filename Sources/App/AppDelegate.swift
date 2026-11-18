@@ -45,10 +45,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var outsideClickMonitor: Any?
     private var refreshQueued = false
     private var bubble: BubbleController!
+    private var roomShownExpanded = false
+    private var collapsing = false
+    private var presentGen = 0
+    private lazy var chimeSound: NSSound? = {
+        let s = NSSound(named: "Pop") ?? NSSound(named: "Tink")
+        s?.volume = 0.35
+        return s
+    }()
 
     private var preferredScale: Double {
         get { UserDefaults.standard.object(forKey: "scale") as? Double ?? 1.5 }
         set { UserDefaults.standard.set(newValue, forKey: "scale") }
+    }
+    /// Gone mode: when tucked away, even the rope disappears. A cat that needs you still pops up.
+    private var ropeHidden: Bool {
+        get { UserDefaults.standard.bool(forKey: "ropeHidden") }
+        set { UserDefaults.standard.set(newValue, forKey: "ropeHidden") }
+    }
+    private var soundOn: Bool {
+        get { UserDefaults.standard.object(forKey: "soundOn") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "soundOn") }
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -69,7 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.resolveApproval(request.id, decision, message: message, done: done)
             },
             hop: { [weak self] id in self?.tree.hop(id) },
-            reduceMotion: { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }))
+            reduceMotion: { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion },
+            chime: { [weak self] in self?.chime() }))
         tree.onCatClick = { [weak self] s in self?.bubble.click(s) }
         tree.onCatDoubleClick = { [weak self] s in self?.bubble.doubleClick(s) }
         tree.onCatRightClick = { [weak self] s, e in self?.showCatMenu(s, e) }
@@ -81,13 +99,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tree.onRightClick = { [weak self] e in self?.showMenu(e) }
         room = CatRoomView(tree: tree)
         room.rope.onPull = { [weak self] in self?.toggleRoom() }
+        room.rope.onDoubleClick = { [weak self] in self?.vanish() }
+        room.rope.reduceMotion = tree.reduceMotion
         room.onDashboard = { [weak self] in self?.showDashboard() }
         room.onHide = { [weak self] in self?.hideRoom() }
         panel.contentView = room
         panel.alphaValue = 1
         if !CommandLine.arguments.contains("--background") { visibility.show() }
         presentRoom()
-        panel.orderFrontRegardless()
         StartupLog.write("Room ready at \(panel.frame); expanded=\(visibility.isExpanded)")
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(revealFromLaunch), name: Notification.Name("local.agentcats.reveal"), object: nil)
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
@@ -113,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ws = NSWorkspace.shared.notificationCenter
         ws.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.tree.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            self?.room.rope.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         }
         ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in self?.queueRefresh() }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
@@ -139,7 +159,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard room != nil else { return }
         visibility.show()
         presentRoom()
-        panel.orderFrontRegardless()
         StartupLog.write("Room revealed by explicit open")
     }
 
@@ -178,27 +197,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let budget = Double(vf.width) * 0.45
         let layout = TreeLayout.compute(ordered: snap.map(\.session), maxWidth: budget, preferredScale: preferredScale)
         currentTreeSize = tree.update(entries: snap.map { .init(session: $0.session, cat: $0.cat) }, layout: layout)
-        let attentionKeys = Set(snap.filter { $0.session.state.needsAttention }.map { Speech.token($0.session) }).union(dashboard.model.approvals.map { "approval|" + $0.id })
+        let attentionKeys = Set(snap.filter { $0.session.wantsYou }.map { Speech.token($0.session) }).union(dashboard.model.approvals.map { "approval|" + $0.id })
         visibility.update(attention: attentionKeys)
-        presentRoom()
-        bubble.update(entries: snap.map { .init(session: $0.session, cat: $0.cat) })
+        let opening = presentRoom()
+        let entries: [CatTreeView.Entry] = snap.map { .init(session: $0.session, cat: $0.cat) }
+        if opening && !tree.reduceMotion {
+            // Let the room finish dropping in before the cat starts talking.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) { [weak self] in self?.bubble.update(entries: entries) }
+        } else {
+            bubble.update(entries: entries)
+        }
     }
 
-    private func presentRoom() {
+    /// Shows the room in its current state. Returns true when the room is just now dropping down.
+    @discardableResult
+    private func presentRoom() -> Bool {
+        guard room != nil else { return false }
+        let expanded = visibility.isExpanded
+        if !expanded, bubble?.isOpen == true { bubble.close(dismissed: false) }
+        if !expanded && roomShownExpanded && !tree.reduceMotion && panel.isVisible {
+            // Slide the room up first, then shrink the window to the cord (or vanish).
+            roomShownExpanded = false
+            collapsing = true
+            timer?.invalidate(); timer = nil
+            presentGen += 1
+            let gen = presentGen
+            room.animateOut { [weak self] in
+                guard let self, self.presentGen == gen else { return }
+                self.collapsing = false
+                self.layoutRoom()
+            }
+            return false
+        }
+        if !expanded && collapsing { return false }   // the slide-up will finish the job
+        presentGen += 1
+        collapsing = false
+        let opening = expanded && !roomShownExpanded
+        roomShownExpanded = expanded
+        layoutRoom()
+        if opening && !tree.reduceMotion { room.animateIn() }
+        return opening
+    }
+
+    /// Sizes and places the panel for the current state, with no animation of its own.
+    private func layoutRoom() {
         guard let room, let screen = NSScreen.screens.first else { return }
-        let size = room.update(expanded: visibility.isExpanded, treeSize: currentTreeSize,
+        let expanded = visibility.isExpanded
+        let size = room.update(expanded: expanded, treeSize: currentTreeSize,
                                count: dashboard.model.entries.count,
-                               attention: dashboard.model.entries.filter { $0.session.state.needsAttention }.count)
+                               attention: dashboard.model.entries.filter { $0.session.wantsYou }.count)
         let vf = screen.visibleFrame
         // The rope remains anchored at the same horizontal position in both states.
         let frame = NSRect(x: vf.maxX - size.width - 14, y: vf.maxY - size.height, width: size.width, height: size.height)
-        if panel.frame != frame {
-            panel.setFrame(frame, display: true, animate: panel.isVisible && !tree.reduceMotion)
-        }
+        if panel.frame != frame { panel.setFrame(frame, display: true) }
         room.layoutSubtreeIfNeeded()
-        if !visibility.isExpanded, bubble?.isOpen == true { bubble.close(dismissed: false) }
-        if visibility.isExpanded {
-            startTimer(fps: tree.hasLivelyCats ? 6 : 2)
+        // While open, the room (and its bubble) also shows over full-screen apps, so a cat asking
+        // you something is never invisible. The idle rope stays out of full-screen apps.
+        var behavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        if expanded { behavior.insert(.fullScreenAuxiliary) }
+        if panel.collectionBehavior != behavior { panel.collectionBehavior = behavior }
+        if !expanded && ropeHidden {
+            if panel.isVisible { panel.orderOut(nil) }
+        } else if !panel.isVisible {
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = tree.reduceMotion ? 0 : 0.18
+                panel.animator().alphaValue = 1
+            }
+        }
+        if expanded {
+            let fps: Double = tree.hasLivelyCats ? 6 : 2
+            tree.tickInterval = 1 / fps
+            startTimer(fps: fps)
         } else {
             timer?.invalidate(); timer = nil
         }
@@ -206,6 +277,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleRoom() { visibility.toggle(); presentRoom() }
     private func hideRoom() { visibility.hide(); presentRoom() }
+
+    /// Double-click on the rope: tuck away and disappear completely. Click the paw to bring it back.
+    private func vanish() {
+        ropeHidden = true
+        visibility.hide()
+        presentRoom()
+    }
+
+    @objc private func toggleRopeHidden() {
+        ropeHidden.toggle()
+        presentRoom()
+    }
+
+    @objc private func toggleSound() {
+        soundOn.toggle()
+        if soundOn { chime() }
+    }
+
+    private func chime() {
+        guard soundOn, let s = chimeSound else { return }
+        s.stop()
+        s.play()
+    }
 
     private func startTimer(fps: Double) {
         if let t = timer, abs(t.timeInterval - 1 / fps) < 0.001 { return }
@@ -222,7 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: menu
 
     @objc private func showDashboard() {
-        let needingAttention = dashboard.model.entries.first { $0.session.state.needsAttention }?.session.id
+        let needingAttention = dashboard.model.entries.first { $0.session.wantsYou }?.session.id
         dashboard.show(session: needingAttention)
     }
 
@@ -238,6 +332,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let open = NSMenuItem(title: "Open dashboard", action: #selector(showDashboard), keyEquivalent: "")
         open.target = self
         m.addItem(open)
+        m.addItem(.separator())
+        let gone = NSMenuItem(title: "Hide completely when tucked away", action: #selector(toggleRopeHidden), keyEquivalent: "")
+        gone.target = self; gone.state = ropeHidden ? .on : .off
+        gone.toolTip = "Even the rope disappears. A cat that needs you still pops up. Double-click the rope to turn this on."
+        m.addItem(gone)
+        let sound = NSMenuItem(title: "Play a sound when a cat asks", action: #selector(toggleSound), keyEquivalent: "")
+        sound.target = self; sound.state = soundOn ? .on : .off
+        m.addItem(sound)
         m.addItem(.separator())
         for (name, v) in [("Large cats", 1.5), ("Small cats", 1.0)] {
             let i = NSMenuItem(title: name, action: #selector(setScale(_:)), keyEquivalent: "")

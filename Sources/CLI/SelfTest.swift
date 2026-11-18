@@ -328,8 +328,12 @@ enum SelfTest {
         store.apply(hook("Stop")!)
         s = store.sessions["S1"]!
         sp = Speech.make(s, hookPending: false)
-        check(sp.mood == .done && sp.text == "Tests pass. Want me to open a PR?", "done bubble shows last reply (got \(sp.text))")
+        check(sp.mood == .question && sp.needsAnswer && sp.text == "Tests pass. Want me to open a PR?", "a turn ending on a question asks you (got \(sp.mood), \(sp.text))")
         check(sp.choices.map(\.label) == ["Yes", "No"], "yes/no offered for a trailing question")
+        check(s.wantsYou && !s.state.needsAttention, "trailing question wants you without changing state")
+        store.tick(now: s.stateSince.addingTimeInterval(300)) { _ in true }
+        check(store.sessions["S1"]!.state == .done, "a question left on the table doesn't doze off")
+        check(Session.endsWithQuestion("Shall I **ship it?**\n") && !Session.endsWithQuestion("Shipped. Done."), "trailing-question detection")
         check(sp.steps(forText: "  ") == nil, "blank reply sends nothing")
         store.apply(hook("UserPromptSubmit", ["prompt": "yes"])!)
         check(store.sessions["S1"]!.lastMessage == nil, "new prompt clears the old reply")

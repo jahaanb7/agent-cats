@@ -116,7 +116,9 @@ public struct Speech: Equatable, Sendable {
 
         case .done:
             let text = s.lastMessage ?? s.activity.map { "Finished \($0)" } ?? "All done!"
-            return Speech(mood: .done, headline: "All done!", text: text,
+            // Ending on a question means it's waiting on you: keep the bubble up until answered.
+            let asks = s.asksForReply
+            return Speech(mood: asks ? .question : .done, headline: asks ? "Question for you" : "All done!", text: text,
                           choices: yesNo(text), textReply: .keys(prefix: []),
                           placeholder: "Reply to keep going…", token: token)
 

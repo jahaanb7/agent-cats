@@ -50,7 +50,7 @@ public struct TreeLayout: Equatable {
         }
         // 2. Smallest scale still readable (1pt); overflow calm cats into the basket.
         //    Cats that need you are never hidden; if even they do not fit, drop to 0.5pt.
-        let attention = ordered.filter { $0.state.needsAttention }.count
+        let attention = ordered.filter { $0.wantsYou }.count
         for s in scales.filter({ $0 >= 1.0 }).reversed() + scales.filter({ $0 < 1.0 }) {
             let fit = Int(floor((maxWidth / s - postW - pad * 2 - basketW) / slotW))
             if fit >= max(1, attention) { return build(ordered, visible: min(fit, n), scale: s) }
@@ -68,7 +68,7 @@ public struct TreeLayout: Equatable {
         for (i, sess) in shown.enumerated() {
             // Alternate perch heights counting from the post, so adding a cat never flips existing ones.
             let fromPost = shown.count - 1 - i
-            slots.append(Slot(sessionId: sess.id, x: x * s, highPerch: fromPost % 2 == 0, front: sess.state.needsAttention))
+            slots.append(Slot(sessionId: sess.id, x: x * s, highPerch: fromPost % 2 == 0, front: sess.wantsYou))
             x += slotW
         }
         let postX = x * s

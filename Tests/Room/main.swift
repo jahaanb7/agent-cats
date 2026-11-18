@@ -22,6 +22,18 @@ let drag = NSEvent.mouseEvent(with: .leftMouseDragged, location: NSPoint(x: 18, 
 let up = NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 18, y: 15), modifierFlags: [], timestamp: 0.2, windowNumber: 0, context: nil, eventNumber: 2, clickCount: 1, pressure: 0)!
 room.rope.mouseDown(with: down); room.rope.mouseDragged(with: drag); room.rope.mouseUp(with: up)
 assert(pulls == 2, "Tug fires once on release")
+var vanished = 0
+room.rope.onDoubleClick = { vanished += 1 }
+func click(_ n: Int) -> (NSEvent, NSEvent) {
+    (NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 18, y: 30), modifierFlags: [], timestamp: 1, windowNumber: 0, context: nil, eventNumber: 10 + n, clickCount: n, pressure: 1)!,
+     NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 18, y: 30), modifierFlags: [], timestamp: 1.05, windowNumber: 0, context: nil, eventNumber: 20 + n, clickCount: n, pressure: 0)!)
+}
+for n in 1...2 { let (d, u) = click(n); room.rope.mouseDown(with: d); room.rope.mouseUp(with: u) }
+RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+assert(vanished == 1 && pulls == 2, "Double-clicking the rope hides everything without also toggling the room")
+let (d1, u1) = click(1); room.rope.mouseDown(with: d1); room.rope.mouseUp(with: u1)
+RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+assert(pulls == 3, "A single click still toggles the room")
 let collapsed = room.update(expanded: false, treeSize: size, count: sessions.count, attention: 0)
 room.layoutSubtreeIfNeeded()
 assert(collapsed == NSSize(width: 36, height: 55), "Collapsed window occupies only the cord")

@@ -1,45 +1,136 @@
 import AppKit
 
 /// A small pull cord stays on screen while the room is tucked away.
+/// Click or tug it to toggle the room; double-click it to make Agent Cats vanish completely
+/// until a cat needs you (or you click the paw in the menu bar).
 final class PullCordView: NSView {
     var onPull: (() -> Void)?
-    var expanded = false { didSet { needsDisplay = true; toolTip = expanded ? "Tug to tuck the cats away" : "Tug to reveal Agent Cats" } }
-    var attention = false { didSet { needsDisplay = true } }
+    var onDoubleClick: (() -> Void)?
+    var reduceMotion = false
+    var expanded = false {
+        didSet {
+            needsDisplay = true
+            toolTip = expanded ? "Tug to tuck the cats away · double-click to hide completely"
+                               : "Tug to reveal Agent Cats · double-click to hide completely"
+        }
+    }
+    var attention = false {
+        didSet { if attention && !oldValue { swing(by: 0.22) }; needsDisplay = true }
+    }
+
     private var startY: CGFloat = 0
-    private var stretch: CGFloat = 0
+    // Spring state: how far the cord is pulled down, and how far it leans (radians).
+    private var stretch: CGFloat = 0, stretchV: CGFloat = 0
+    private var angle: CGFloat = 0, angleV: CGFloat = 0
+    private var holding = false
+    private var ticker: Timer?
+    private var pendingPull: DispatchWorkItem?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel("Toggle Agent Cats room")
-        toolTip = "Click or tug to reveal Agent Cats"
+        toolTip = "Tug to reveal Agent Cats · double-click to hide completely"
     }
     required init?(coder: NSCoder) { fatalError() }
     override func accessibilityPerformPress() -> Bool { onPull?(); return true }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
-    override func mouseDown(with event: NSEvent) { startY = event.locationInWindow.y; stretch = 3; needsDisplay = true }
-    override func mouseDragged(with event: NSEvent) {
-        stretch = min(14, max(0, startY - event.locationInWindow.y)); needsDisplay = true
+
+    override func mouseDown(with event: NSEvent) {
+        startY = event.locationInWindow.y
+        holding = true
+        stretch = 3; stretchV = 0
+        needsDisplay = true
     }
-    override func mouseUp(with event: NSEvent) { stretch = 0; needsDisplay = true; onPull?() }
-    override func draw(_ dirtyRect: NSRect) {
-        let x = bounds.midX
-        let end = max(10, 23 - stretch)
-        let cord = NSBezierPath()
-        cord.move(to: NSPoint(x: x, y: bounds.maxY))
-        cord.line(to: NSPoint(x: x, y: end))
-        cord.lineWidth = 3
-        NSColor(srgbRed: 0.67, green: 0.50, blue: 0.31, alpha: 1).setStroke(); cord.stroke()
-        for y in stride(from: end + 3, to: bounds.maxY, by: 5) {
-            NSColor(srgbRed: 0.93, green: 0.82, blue: 0.60, alpha: 1).setFill()
-            NSRect(x: x - 1.5, y: y, width: 3, height: 2).fill()
+    override func mouseDragged(with event: NSEvent) {
+        stretch = min(16, max(0, startY - event.locationInWindow.y)); needsDisplay = true
+    }
+    override func mouseUp(with event: NSEvent) {
+        holding = false
+        let tugged = stretch >= 6
+        // Let go: the cord springs back and swings a little.
+        stretchV = 0
+        swing(by: tugged ? 0.16 : 0.08)
+        if event.clickCount >= 2 {
+            pendingPull?.cancel(); pendingPull = nil
+            onDoubleClick?()
+            return
         }
-        let knob = NSBezierPath(roundedRect: NSRect(x: x - 8, y: end - 10, width: 16, height: 17), xRadius: 5, yRadius: 5)
+        if tugged {
+            // A real tug is never the first half of a double-click.
+            onPull?()
+            return
+        }
+        // A plain click waits a moment in case a second click is on its way. The room moves
+        // under the cursor when it opens, so the second click would otherwise land elsewhere.
+        pendingPull?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.pendingPull = nil; self?.onPull?() }
+        pendingPull = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + min(NSEvent.doubleClickInterval, 0.3), execute: work)
+    }
+
+    /// Give the cord a nudge; it sways and settles on its own.
+    func swing(by kick: CGFloat) {
+        guard !reduceMotion else { return }
+        angleV += (angle >= 0 ? -1 : 1) * kick * 9
+        startTicker()
+    }
+
+    private func startTicker() {
+        guard ticker == nil else { return }
+        let t = Timer(timeInterval: 1 / 60, repeats: true) { [weak self] _ in self?.step() }
+        RunLoop.main.add(t, forMode: .common)
+        ticker = t
+    }
+
+    /// Damped springs, integrated at 60 fps, only while something is moving.
+    private func step() {
+        let dt: CGFloat = 1 / 60
+        angleV += (-90 * angle - 5 * angleV) * dt
+        angle = max(-0.22, min(0.22, angle + angleV * dt))
+        if !holding {
+            stretchV += (-260 * stretch - 18 * stretchV) * dt
+            stretch += stretchV * dt
+        }
+        needsDisplay = true
+        if !holding, abs(angle) < 0.002, abs(angleV) < 0.01, abs(stretch) < 0.1, abs(stretchV) < 0.1 {
+            angle = 0; angleV = 0; stretch = 0; stretchV = 0
+            ticker?.invalidate(); ticker = nil
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let top = NSPoint(x: bounds.midX, y: bounds.maxY)
+        let length = min(bounds.maxY - 11, max(12, bounds.maxY - 23 + stretch))
+        NSGraphicsContext.saveGraphicsState()
+        let t = NSAffineTransform()
+        t.translateX(by: top.x, yBy: top.y)
+        t.rotate(byRadians: angle)
+        t.concat()
+        // Everything below is drawn hanging from (0, 0), pointing down.
+        let end = -length
+        let cord = NSBezierPath()
+        cord.move(to: .zero)
+        cord.line(to: NSPoint(x: 0, y: end))
+        cord.lineWidth = 3
+        cord.lineCapStyle = .round
+        NSColor(srgbRed: 0.67, green: 0.50, blue: 0.31, alpha: 1).setStroke(); cord.stroke()
+        NSColor(srgbRed: 0.93, green: 0.82, blue: 0.60, alpha: 1).setFill()
+        for y in stride(from: end + 3, to: 0, by: 5) {
+            NSRect(x: -1.5, y: y, width: 3, height: 2).fill()
+        }
+        let knobRect = NSRect(x: -8, y: end - 10, width: 16, height: 17)
+        if attention {
+            NSColor.systemOrange.withAlphaComponent(0.28).setFill()
+            NSBezierPath(roundedRect: knobRect.insetBy(dx: -3, dy: -3), xRadius: 8, yRadius: 8).fill()
+        }
+        let knob = NSBezierPath(roundedRect: knobRect, xRadius: 5, yRadius: 5)
         (attention ? NSColor.systemOrange : NSColor(srgbRed: 0.47, green: 0.62, blue: 0.52, alpha: 1)).setFill(); knob.fill()
         NSColor(srgbRed: 0.18, green: 0.27, blue: 0.23, alpha: 1).setStroke(); knob.lineWidth = 1.5; knob.stroke()
         NSColor(srgbRed: 0.95, green: 0.89, blue: 0.73, alpha: 1).setFill()
-        NSRect(x: x - 3, y: end - 3, width: 6, height: 2).fill()
+        NSRect(x: -3, y: end - 3, width: 6, height: 2).fill()
+        NSGraphicsContext.restoreGraphicsState()
     }
 }
 
@@ -95,6 +186,8 @@ final class CatRoomView: NSView {
     init(tree: CatTreeView) {
         self.tree = tree
         super.init(frame: .zero)
+        wantsLayer = true
+        backdrop.wantsLayer = true
         addSubview(backdrop)
         backdrop.addSubview(tree)
         title.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
@@ -143,6 +236,42 @@ final class CatRoomView: NSView {
         tree.frame = NSRect(x: bounds.width - treeSize.width - 16, y: 40, width: treeSize.width, height: treeSize.height)
         review.frame = NSRect(x: bounds.width - 116, y: 9, width: 102, height: 23)
     }
+    // MARK: motion
+
+    /// The room drops down from the menu bar like a blind, with a soft spring at the bottom.
+    func animateIn() {
+        guard let l = backdrop.layer else { return }
+        l.removeAllAnimations()
+        let drop = CASpringAnimation(keyPath: "transform.translation.y")
+        drop.fromValue = 26; drop.toValue = 0
+        drop.mass = 1; drop.stiffness = 260; drop.damping = 22; drop.initialVelocity = 0
+        drop.duration = drop.settlingDuration
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0; fade.toValue = 1
+        fade.duration = 0.18
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        l.add(drop, forKey: "drop"); l.add(fade, forKey: "fade")
+        tree.popInCats()
+    }
+
+    /// Slides the room back up under the menu bar, then calls `done`.
+    func animateOut(_ done: @escaping () -> Void) {
+        guard let l = backdrop.layer, !backdrop.isHidden else { done(); return }
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { l.removeAllAnimations(); done() }
+        let lift = CABasicAnimation(keyPath: "transform.translation.y")
+        lift.fromValue = 0; lift.toValue = 22
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1; fade.toValue = 0
+        for a in [lift, fade] {
+            a.duration = 0.2
+            a.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 1, 1)
+            a.fillMode = .forwards; a.isRemovedOnCompletion = false
+            l.add(a, forKey: a.keyPath)
+        }
+        CATransaction.commit()
+    }
+
     @objc private func openDashboard() { onDashboard?() }
     @objc private func hideRoom() { onHide?() }
 }

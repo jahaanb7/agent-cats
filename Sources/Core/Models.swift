@@ -149,4 +149,17 @@ public struct Session: Sendable {
     public init(id: String, agent: AgentKind, at: Date) {
         self.id = id; self.agent = agent; startedAt = at; lastEventAt = at; stateSince = at
     }
+
+    /// The turn finished on a question to you ("Want me to open a PR?"). Without hooks this is
+    /// the most common way an agent asks for something, so it counts as needing you.
+    public var asksForReply: Bool { state == .done && Session.endsWithQuestion(lastMessage) }
+
+    /// Anything the cat should speak up about and bring the room back for.
+    public var wantsYou: Bool { state.needsAttention || asksForReply }
+
+    public static func endsWithQuestion(_ text: String?) -> Bool {
+        guard let text else { return false }
+        let trailing = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "*_`)\"'\u{201D}"))
+        return text.trimmingCharacters(in: trailing).hasSuffix("?")
+    }
 }

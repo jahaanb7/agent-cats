@@ -53,12 +53,17 @@ final class CatTreeView: NSView {
         // Drop cats that left; add new ones.
         let visible = Set(layout.slots.map(\.sessionId))
         for (id, l) in catLayers where !visible.contains(id) || scaleChanged { l.removeFromSuperlayer(); catLayers[id] = nil }
+        var arrived: [CALayer] = []
         for slot in layout.slots where catLayers[slot.sessionId] == nil {
             let l = CALayer()
             l.magnificationFilter = .nearest
             l.contentsScale = s
+            // Sprite frames swap instantly (no cross-fade); position changes are tweened in `animate`.
+            l.actions = ["contents": NSNull(), "opacity": NSNull()]
+            l.frame = catRect(slot)
             layer?.addSublayer(l)
             catLayers[slot.sessionId] = l
+            if !scaleChanged { arrived.append(l) }
         }
         if let bx = layout.basketX, !layout.basket.isEmpty {
             basketLabel.isHidden = false
@@ -77,8 +82,32 @@ final class CatTreeView: NSView {
             }
         }
         animate(force: true)
+        if !reduceMotion { arrived.forEach { Self.popIn($0) } }
         window?.invalidateCursorRects(for: self)
         return NSSize(width: layout.width, height: layout.height)
+    }
+
+    /// A cat lands on its perch: a small drop and a squash-and-settle.
+    private static func popIn(_ l: CALayer, delay: CFTimeInterval = 0) {
+        let scale = CASpringAnimation(keyPath: "transform.scale")
+        scale.fromValue = 0.4; scale.toValue = 1
+        scale.stiffness = 320; scale.damping = 16; scale.mass = 0.9
+        scale.duration = scale.settlingDuration
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0; fade.toValue = l.opacity; fade.duration = 0.16
+        for a in [scale, fade] as [CAAnimation] {
+            a.beginTime = CACurrentMediaTime() + delay
+            a.fillMode = .backwards
+            l.add(a, forKey: "pop-" + ((a as? CAPropertyAnimation)?.keyPath ?? ""))
+        }
+    }
+
+    /// Every cat pops in, left to right, as the room drops down.
+    func popInCats() {
+        guard !reduceMotion else { return }
+        for (i, slot) in layout.slots.enumerated() {
+            if let l = catLayers[slot.sessionId] { Self.popIn(l, delay: 0.08 + Double(i) * 0.045) }
+        }
     }
 
     /// Art-pixel geometry of a cat sitting on its perch.
@@ -92,10 +121,20 @@ final class CatTreeView: NSView {
                       width: Double(SpriteBook.canvasW) * s, height: Double(SpriteBook.canvasH) * s)
     }
 
+    /// Seconds between animation ticks, so bobbing glides across the whole gap instead of jumping.
+    var tickInterval: CFTimeInterval = 1 / 6
+
     /// Called by the animation timer. Only touches layers whose image changed.
+    /// Positions glide: a bob eases between ticks, and a layout change slides cats to their new perch.
     func animate(force: Bool = false) {
         if !force { frameNo &+= 1 }
-        CATransaction.begin(); CATransaction.setDisableActions(true)
+        CATransaction.begin()
+        if reduceMotion || window == nil {
+            CATransaction.setDisableActions(true)
+        } else {
+            CATransaction.setAnimationDuration(force ? 0.38 : min(0.2, tickInterval * 0.9))
+            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
+        }
         let now = Date()
         for slot in layout.slots {
             guard let e = entries[slot.sessionId], let l = catLayers[slot.sessionId] else { continue }

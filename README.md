@@ -38,7 +38,7 @@ Each running agent session gets its own cat. The cat's pose shows what the agent
 
 - **One cat per session.** Cats sit on perches. Their pose and animation reflect the session's state: working, thinking, waiting for you, done, or asleep. The room grows with your sessions. When there are many, calm sessions doze in a "+N" basket, and cats that need you are never hidden.
 - **Talking cats.** Click a cat to open its bubble. Questions come with the agent's options as buttons and a text box for your own answer. Permission requests get Allow and Deny. Finished tasks show the agent's last reply.
-- **Cats speak up on their own** when they need permission, ask a question, finish a task, or hit an error. A question stays up until you answer it.
+- **Cats speak up on their own** when they need permission, ask a question, finish a task, or hit an error. If the room is tucked away (or hidden completely), it drops back down with a soft sound and the cat asks you directly, with a text box to reply. A question stays up until you answer it. A turn that ends with a question ("Want me to open a PR?") counts as a question.
 - **Reply without switching windows.** Replies go to the agent through the hook that is waiting on a permission request, or by typing into the session's terminal tab.
 - **Jump to any session.** Double-click a cat to bring its terminal tab forward.
 - **Dashboard.** See every session's activity history, model, token use, cache hit rate, context-window use, and rate limits, with the project folder one click away.
@@ -92,6 +92,7 @@ Command-line equivalents:
 | Action | Result |
 |---|---|
 | Click the paw or tug the rope | Show or hide the room |
+| Double-click the rope | Hide Agent Cats completely, rope included. A cat that needs you still pops up; click the paw to bring it back |
 | Single-click a cat | Open or close its speech bubble |
 | Double-click a cat | Jump to its terminal |
 | Right-click a cat | What do you need? · Open terminal · Open project folder · Show details… |
@@ -116,6 +117,8 @@ Typing is limited to Terminal.app and iTerm2, where Agent Cats can target the ex
 | Item | Location |
 |---|---|
 | Cat size | Right-click the room → Large cats / Small cats |
+| Hide completely when tucked away | Right-click the room, or double-click the rope |
+| Pop-up sound | Right-click the room → Play a sound when a cat asks |
 | Hook configuration | `~/.claude/settings.json`, `~/.codex/hooks.json` |
 | Hook backups | `~/Library/Application Support/AgentCats/backups/` |
 | Event socket and spool | `~/Library/Application Support/AgentCats/` (`ev.sock`, `spool.jsonl`) |

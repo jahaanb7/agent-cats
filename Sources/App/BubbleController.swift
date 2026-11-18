@@ -14,6 +14,8 @@ final class BubbleController {
         var decide: (PendingApproval, ApprovalProtocol.Decision, String?, @escaping (Bool) -> Void) -> Void
         var hop: (String) -> Void
         var reduceMotion: () -> Bool
+        /// A soft sound when a cat speaks up on its own to ask you something.
+        var chime: () -> Void = {}
     }
 
     let model = BubbleModel()
@@ -31,6 +33,8 @@ final class BubbleController {
     private var watch: AnyCancellable?
     private var targets: [String: (pid: Int32?, ok: Bool, app: String?)] = [:]
     private let started = Date()
+    private var chimed = Set<String>()           // tokens already announced with a sound
+    private var fadeGen = 0
 
     init(env: Env) {
         self.env = env
@@ -90,11 +94,7 @@ final class BubbleController {
         }
         pendingClose?.cancel(); pendingClose = nil
         sessionID = nil
-        model.speech = nil
-        model.draft = ""
-        model.status = .idle
-        model.anim.popped = false
-        panel.orderOut(nil)
+        fadeOut()
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.isOpen else { return }
             // Anything that changed while this bubble was up gets its turn now.
@@ -126,7 +126,12 @@ final class BubbleController {
         updateWaiting()
         model.generation += 1
         placeNow()
+        fadeGen += 1
+        panel.alphaValue = 1
         if auto { panel.orderFrontRegardless() } else { panel.makeKeyAndOrderFront(nil) }
+        if auto, model.speech?.needsAnswer == true, let token = model.speech?.token, chimed.insert(token).inserted {
+            env.chime()
+        }
         env.hop(id)
         scheduleAutoHide()
     }
@@ -223,7 +228,7 @@ final class BubbleController {
 
     /// Cats speak up when they need you, finish, or get stuck.
     private func considerSpeaking(_ s: Session) {
-        let urgent = s.state.needsAttention
+        let urgent = s.wantsYou
         guard urgent || s.state == .done else { return }
         let token = Speech.token(s)
         guard spoken[s.id] != token, sessionID != s.id else { return }
@@ -233,7 +238,7 @@ final class BubbleController {
         }
         guard !queue.contains(s.id) else { return }
         if urgent {
-            let firstCalm = queue.firstIndex { !(entries[$0]?.session.state.needsAttention ?? false) } ?? queue.endIndex
+            let firstCalm = queue.firstIndex { !(entries[$0]?.session.wantsYou ?? false) } ?? queue.endIndex
             queue.insert(s.id, at: firstCalm)
         } else {
             queue.append(s.id)
@@ -244,8 +249,8 @@ final class BubbleController {
         queue.removeAll { id in
             guard let s = entries[id]?.session else { return true }
             // "Done" is only news for a minute. A question still waiting is still worth asking.
-            if s.state == .done, Date().timeIntervalSince(s.stateSince) > 60 { return true }
-            return spoken[id] == Speech.token(s) || !(s.state.needsAttention || s.state == .done)
+            if s.state == .done, !s.asksForReply, Date().timeIntervalSince(s.stateSince) > 60 { return true }
+            return spoken[id] == Speech.token(s) || !(s.wantsYou || s.state == .done)
         }
         // A cat that's off screen (basket, room tucked) waits without blocking the others.
         guard let next = queue.first(where: { env.catRect($0) != nil }), let s = entries[next]?.session else { return }
@@ -253,14 +258,37 @@ final class BubbleController {
             // Only a bubble the cat opened itself, that isn't asking anything and that you aren't
             // using, gives way — and only to something urgent.
             guard auto, let cur = model.speech, !cur.needsAnswer, model.draft.isEmpty, !panel.isKeyWindow,
-                  model.status == .idle, s.state.needsAttention else { return }
+                  model.status == .idle, s.wantsYou else { return }
         }
         open(next, auto: true)
     }
 
     private func updateWaiting() {
-        let n = queue.filter { $0 != sessionID && (entries[$0]?.session.state.needsAttention ?? false) }.count
+        let n = queue.filter { $0 != sessionID && (entries[$0]?.session.wantsYou ?? false) }.count
         if model.waiting != n { model.waiting = n }
+    }
+
+    /// The bubble melts away instead of blinking out. Reopening before it finishes cancels the fade.
+    /// The words stay on the bubble while it fades, and are cleared once it is gone.
+    private func fadeOut() {
+        fadeGen += 1
+        let gen = fadeGen
+        let finish = { [weak self] in
+            guard let self, self.fadeGen == gen else { return }
+            self.panel.orderOut(nil)
+            self.panel.alphaValue = 1
+            self.model.speech = nil
+            self.model.draft = ""
+            self.model.status = .idle
+            self.model.anim.popped = false
+        }
+        guard panel.isVisible, !env.reduceMotion() else { finish(); return }
+        panel.makeFirstResponder(nil)
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.16
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        }, completionHandler: finish)
     }
 
     // MARK: placement
