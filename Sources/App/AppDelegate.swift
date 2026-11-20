@@ -1,3 +1,4 @@
+import ApplicationServices
 import AppKit
 import ServiceManagement
 
@@ -139,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.onChange = { [weak self] in self?.queueRefresh() }
         monitor.start(listen: true)
         StartupLog.write("Session monitor started")
+        StartupLog.write("Accessibility (typing into Terminal): \(AXIsProcessTrusted() ? "granted" : "not granted")")
         // New install, or the app moved since the hooks were set up: walk through setup.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.dashboard.showSetupIfNeeded() }
 

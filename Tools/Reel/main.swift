@@ -1,16 +1,27 @@
 import AppKit
 import SwiftUI
 
-// Renders a 1080×1920 vertical promo reel from the app's own views (room, cats, bubble, dashboard).
-// Usage: Tools/make-reel.sh   → dist/agent-cats-reel.mp4
-// Frames are written to the folder given as the first argument.
+// Renders the 1080×1920 promo reel from the app's own views (room, cats, bubbles, dashboard).
+// Driven by Tools/make-reel.sh, which records the voiceover first and passes its timing here:
+//   reel <timeline.json> <frames-dir>
+// Writes f0000.png… plus sfx.json (sound-effect cues) into the frames folder.
 
-let W: CGFloat = 1080, H: CGFloat = 1920, FPS = 30.0, DURATION = 22.5
-let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "dist/reel-frames")
+let W: CGFloat = 1080, H: CGFloat = 1920, FPS = 30.0
+let args = CommandLine.arguments
+guard args.count >= 3 else { fatalError("usage: reel <timeline.json> <frames-dir>") }
+let outDir = URL(fileURLWithPath: args[2])
 try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 let app = NSApplication.shared
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 guard let book = SpriteBook(url: root.appendingPathComponent("Art/cats.json")) else { fatalError("missing sprites") }
+
+struct Line: Decodable { let caption: String; let start: Double; let end: Double }
+struct Timeline: Decodable { let lines: [Line]; let duration: Double }
+let timeline = try! JSONDecoder().decode(Timeline.self, from: Data(contentsOf: URL(fileURLWithPath: args[1])))
+let L = timeline.lines
+precondition(L.count == 8, "the storyboard expects 8 voiceover lines")
+func S(_ i: Int) -> Double { i < L.count ? L[i].start : timeline.duration }
+func E(_ i: Int) -> Double { L[i].end }
 
 // MARK: palette and helpers
 
@@ -18,13 +29,20 @@ func rgb(_ r: Int, _ g: Int, _ b: Int, _ a: CGFloat = 1) -> NSColor {
     NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: a)
 }
 let forest = rgb(46, 66, 58), forestDark = rgb(33, 48, 42), cream = rgb(246, 233, 203), orange = rgb(235, 140, 84)
-let ink = rgb(36, 56, 48)
+let night = rgb(18, 20, 26), red = rgb(232, 76, 72)
+let confettiColors = [orange, cream, rgb(127, 208, 188), rgb(240, 196, 92), rgb(214, 120, 160)]
 
 func clamp(_ x: Double) -> Double { min(1, max(0, x)) }
 func progress(_ t: Double, _ a: Double, _ b: Double) -> Double { clamp((t - a) / (b - a)) }
 func easeOut(_ x: Double) -> Double { 1 - pow(1 - x, 3) }
 func easeInOut(_ x: Double) -> Double { x < 0.5 ? 4 * x * x * x : 1 - pow(-2 * x + 2, 3) / 2 }
-func easeOutBack(_ x: Double) -> Double { let c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * pow(x - 1, 3) + c1 * pow(x - 1, 2) }
+func easeOutBack(_ x: Double) -> Double { let c1 = 1.9, c3 = c1 + 1; return 1 + c3 * pow(x - 1, 3) + c1 * pow(x - 1, 2) }
+/// Deterministic noise in 0..<1 (particles, shake) so every render is identical.
+func rnd(_ a: Int, _ b: Int) -> Double {
+    var x = UInt64(truncatingIfNeeded: a &* 73_856_093 ^ b &* 19_349_663) &+ 0x9E37_79B9_7F4A_7C15
+    x = (x ^ (x >> 30)) &* 0xBF58_476D_1CE4_E5B9; x = (x ^ (x >> 27)) &* 0x94D0_49BB_1331_11EB
+    return Double((x ^ (x >> 31)) % 10_000) / 10_000
+}
 
 func snapshot(_ v: NSView) -> NSImage {
     v.layoutSubtreeIfNeeded()
@@ -34,35 +52,104 @@ func snapshot(_ v: NSView) -> NSImage {
     return img
 }
 
-/// Draws `img` (point size) at `rect` in the flipped canvas, optionally pixel-crisp.
 func draw(_ img: NSImage, _ rect: NSRect, alpha: CGFloat = 1, crisp: Bool = false) {
-    let ctx = NSGraphicsContext.current!
-    ctx.imageInterpolation = crisp ? .none : .high
+    NSGraphicsContext.current!.imageInterpolation = crisp ? .none : .high
     img.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha, respectFlipped: true, hints: nil)
+}
+
+/// Runs `body` with the canvas scaled by `s` around `p` (and optionally shifted / rotated).
+func withTransform(scale s: CGFloat, around p: CGPoint, shift: CGPoint = .zero, rotate: CGFloat = 0, _ body: () -> Void) {
+    NSGraphicsContext.saveGraphicsState()
+    let t = NSAffineTransform()
+    t.translateX(by: p.x + shift.x, yBy: p.y + shift.y); t.rotate(byDegrees: rotate); t.scale(by: max(0.001, s))
+    t.translateX(by: -p.x, yBy: -p.y); t.concat()
+    body()
+    NSGraphicsContext.restoreGraphicsState()
 }
 
 func pixelText(_ s: String, px: CGFloat, color: NSColor = cream) -> NSImage {
     PixelFont.image(s, px: px, fill: color, shadow: forestDark, accent: orange)
 }
 
-/// Centered lines of pixel text, sliding up as they appear.
-func caption(_ lines: [String], y: CGFloat, px: CGFloat, t: Double, start: Double, end: Double, color: NSColor = cream) {
-    let inP = easeOut(progress(t, start, start + 0.45))
-    let outP = progress(t, end - 0.3, end)
-    let alpha = CGFloat(inP * (1 - outP))
-    guard alpha > 0 else { return }
-    var yy = y + CGFloat(1 - inP) * 40
-    for line in lines {
-        let img = pixelText(line, px: px, color: color)
-        draw(img, NSRect(x: (W - img.size.width) / 2, y: yy, width: img.size.width, height: img.size.height), alpha: alpha, crisp: true)
-        yy += img.size.height + px * 3
+func drawPixelCentered(_ s: String, px: CGFloat, y: CGFloat, scale: CGFloat = 1, alpha: CGFloat = 1, color: NSColor = cream) {
+    let img = pixelText(s, px: px, color: color)
+    let w = img.size.width * scale, h = img.size.height * scale
+    draw(img, NSRect(x: (W - w) / 2, y: y - h / 2, width: w, height: h), alpha: alpha, crisp: true)
+}
+
+// MARK: sound-effect cues (mixed by make-reel.sh)
+
+var cues: [[String: Any]] = []
+var cued = Set<String>()
+/// Records a sound effect once, on the first frame that reaches `at`.
+func cue(_ name: String, at: Double, _ t: Double, gain: Double = 1) {
+    let key = "\(name)@\(at)"
+    guard t >= at, !cued.contains(key) else { return }
+    cued.insert(key); cues.append(["name": name, "t": max(0, at), "gain": gain])
+}
+
+// MARK: karaoke captions
+
+let captionFont: NSFont = {
+    let base = NSFont.systemFont(ofSize: 78, weight: .black)
+    return NSFont(descriptor: base.fontDescriptor.withDesign(.rounded) ?? base.fontDescriptor, size: 78) ?? base
+}()
+
+func captionAttrs(_ color: NSColor) -> [NSAttributedString.Key: Any] {
+    let shadow = NSShadow(); shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
+    shadow.shadowOffset = NSSize(width: 0, height: -6); shadow.shadowBlurRadius = 0
+    return [.font: captionFont, .foregroundColor: color, .strokeColor: rgb(20, 28, 24), .strokeWidth: -7, .shadow: shadow]
+}
+
+/// Words appear as they're spoken; the word being said is orange and a little bigger.
+func caption(_ i: Int, t: Double, y: CGFloat) {
+    let line = L[i]
+    let until = S(i + 1) - 0.05
+    guard t >= line.start - 0.05, t < until else { return }
+    let words = line.caption.split(separator: " ").map(String.init)
+    let total = Double(words.reduce(0) { $0 + $1.count + 2 })
+    var starts: [Double] = []; var acc = 0.0
+    for w in words { starts.append(line.start + (line.end - line.start - 0.15) * acc / total); acc += Double(w.count + 2) }
+    let white = captionAttrs(.white)
+    let space = NSAttributedString(string: " ", attributes: white).size().width * 1.35
+    var rows: [[Int]] = [[]]; var rowW: CGFloat = 0
+    for (k, w) in words.enumerated() {
+        let ww = NSAttributedString(string: w, attributes: white).size().width
+        if rowW > 0 && rowW + space + ww > 900 { rows.append([]); rowW = 0 }
+        rows[rows.count - 1].append(k); rowW += (rowW > 0 ? space : 0) + ww
+    }
+    let lineH: CGFloat = 92
+    let fadeOut = CGFloat(1 - progress(t, until - 0.12, until))
+    for (r, row) in rows.enumerated() {
+        let widths = row.map { NSAttributedString(string: words[$0], attributes: white).size().width }
+        var x = (W - (widths.reduce(0, +) + space * CGFloat(row.count - 1))) / 2
+        let yy = y + CGFloat(r) * lineH
+        for (j, k) in row.enumerated() {
+            let p = progress(t, starts[k], starts[k] + 0.14)
+            if p > 0 {
+                let speaking = t < (k + 1 < starts.count ? starts[k + 1] : line.end)
+                let color = speaking ? orange : NSColor.white
+                let s = CGFloat(0.6 + 0.4 * easeOutBack(p)) * (speaking ? 1.04 : 1)
+                let str = NSAttributedString(string: words[k], attributes: captionAttrs(color.withAlphaComponent(fadeOut)))
+                withTransform(scale: s, around: CGPoint(x: x + widths[j] / 2, y: yy + lineH / 2)) { str.draw(at: NSPoint(x: x, y: yy)) }
+            }
+            x += widths[j] + space
+        }
     }
 }
 
-// MARK: the cast
+// MARK: cats, room and bubbles
+
+func drawCat(_ coat: String, _ state: CatState, center: CGPoint, px: CGFloat, frame: Int, since: Double = 5, alpha: CGFloat = 1) {
+    let (look, dy) = catLook(coat: coat, agent: "claude", state: state, frame: frame, sinceState: since, still: false)
+    guard let cg = book.image(look) else { return }
+    let img = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+    let w = img.size.width * px, h = img.size.height * px
+    draw(img, NSRect(x: center.x - w / 2, y: center.y - h / 2 - CGFloat(dy) * px, width: w, height: h), alpha: alpha, crisp: true)
+}
 
 func session(_ id: String, _ project: String, _ state: CatState, _ configure: (inout Session) -> Void = { _ in }) -> Session {
-    var s = Session(id: id, agent: .claude, at: Date(timeIntervalSince1970: 1_700_000_000 + Double(id.hashValue % 100)))
+    var s = Session(id: id, agent: .claude, at: Date(timeIntervalSince1970: 1_700_000_000))
     s.state = state; s.cwd = "/Users/me/Projects/" + project; s.tty = "ttys00\(id.count)"; s.stateSince = Date()
     configure(&s)
     return s
@@ -90,24 +177,27 @@ func renderRoom() -> NSImage {
     return snapshot(room)
 }
 
-/// The cat's bottom-centre in room points (bottom-left origin), for the bubble's tail.
+/// The cat's bottom-centre in room points (bottom-left origin).
 func catAnchor(_ id: String) -> CGPoint {
     guard let slot = currentLayout.slots.first(where: { $0.sessionId == id }) else { return .zero }
     let s = currentLayout.scale
     let treeX = room.bounds.width - currentLayout.width - 16
     let perch = Double(slot.highPerch ? TreeArt.highPost : TreeArt.lowPost)
-    let x = treeX + slot.x + (1 + Double(SpriteBook.canvasW) / 2) * s
-    let y = 40 + (3 + perch + 2) * s
-    return CGPoint(x: x, y: y)
+    return CGPoint(x: treeX + slot.x + (1 + Double(SpriteBook.canvasW) / 2) * s, y: 40 + (3 + perch + 2) * s)
 }
 
-func bubbleImage(cat: String, speech: Speech, status: BubbleModel.Status = .idle, tailX: CGFloat) -> NSImage {
+var bubbleCache: [String: NSImage] = [:]
+func bubbleImage(cat: String, speech: Speech, sent: Bool) -> NSImage {
+    let key = "\(cat)|\(speech.token)|\(sent)"
+    if let img = bubbleCache[key] { return img }
     let m = BubbleModel()
     m.cat = cat; m.speech = speech; m.reduceMotion = true; m.anim.popped = true; m.anim.shown = speech.text.count
-    m.tailOnTop = true; m.tailX = tailX; m.showHint = false; m.status = status
+    m.tailOnTop = true; m.tailX = 150; m.showHint = false; m.status = sent ? .sent : .idle
     let host = NSHostingView(rootView: BubbleView(model: m))
     host.frame.size = NSSize(width: 300, height: host.fittingSize.height)
-    return snapshot(host)
+    let img = snapshot(host)
+    bubbleCache[key] = img
+    return img
 }
 
 func dashboardImage() -> NSImage {
@@ -136,8 +226,6 @@ func dashboardImage() -> NSImage {
     return snapshot(host)
 }
 
-// MARK: speeches
-
 let askDeploy = Speech(mood: .permission, headline: "Can I do this?", text: "I want to deploy the site.",
                        choices: [.init(label: "Allow", reply: .hook(allow: true), primary: true),
                                  .init(label: "Deny", reply: .hook(allow: false)),
@@ -147,29 +235,100 @@ let askPR = Speech(mood: .question, headline: "Question for you", text: "Tests p
                    choices: [.init(label: "Yes", reply: .keys([]), primary: true), .init(label: "No", reply: .keys([]))],
                    textReply: .keys(prefix: []), placeholder: "Reply to keep going…", token: "2")
 
+// MARK: scene pieces
+
+let mono = NSFont.monospacedSystemFont(ofSize: 25, weight: .regular)
+let monoBold = NSFont.monospacedSystemFont(ofSize: 25, weight: .bold)
+
+/// A Claude Code terminal stuck on "Do you want to proceed?", with a red waiting badge.
+func drawTerminal(_ r: NSRect, project: String, waited: String, blink: Bool) {
+    let shadow = NSShadow(); shadow.shadowColor = NSColor.black.withAlphaComponent(0.5)
+    shadow.shadowBlurRadius = 30; shadow.shadowOffset = NSSize(width: 0, height: -14)
+    NSGraphicsContext.saveGraphicsState(); shadow.set()
+    rgb(30, 31, 36).setFill(); NSBezierPath(roundedRect: r, xRadius: 18, yRadius: 18).fill()
+    NSGraphicsContext.restoreGraphicsState()
+    rgb(48, 49, 56).setFill()
+    NSBezierPath(roundedRect: NSRect(x: r.minX, y: r.minY, width: r.width, height: 46), xRadius: 18, yRadius: 18).fill()
+    NSRect(x: r.minX, y: r.minY + 26, width: r.width, height: 20).fill()
+    for (k, c) in [rgb(255, 95, 87), rgb(254, 188, 46), rgb(40, 200, 64)].enumerated() {
+        c.setFill(); NSBezierPath(ovalIn: NSRect(x: r.minX + 20 + CGFloat(k) * 28, y: r.minY + 15, width: 16, height: 16)).fill()
+    }
+    let dim: [NSAttributedString.Key: Any] = [.font: mono, .foregroundColor: rgb(150, 152, 160)]
+    let bright: [NSAttributedString.Key: Any] = [.font: monoBold, .foregroundColor: rgb(235, 236, 240)]
+    let accent: [NSAttributedString.Key: Any] = [.font: monoBold, .foregroundColor: orange]
+    NSAttributedString(string: "claude — \(project)", attributes: dim).draw(at: NSPoint(x: r.minX + 120, y: r.minY + 9))
+    let lines: [(String, [NSAttributedString.Key: Any])] = [
+        ("Bash command", dim), ("  npm run deploy", bright), ("", dim),
+        ("Do you want to proceed?", bright), ("❯ 1. Yes", accent), ("  2. No", dim),
+    ]
+    for (k, l) in lines.enumerated() {
+        NSAttributedString(string: l.0, attributes: l.1).draw(at: NSPoint(x: r.minX + 28, y: r.minY + 66 + CGFloat(k) * 36))
+    }
+    let badge = NSRect(x: r.maxX - 250, y: r.maxY - 66, width: 226, height: 46)
+    red.withAlphaComponent(blink ? 1 : 0.7).setFill()
+    NSBezierPath(roundedRect: badge, xRadius: 23, yRadius: 23).fill()
+    let bt = NSAttributedString(string: "WAITING \(waited)", attributes: [.font: NSFont.monospacedSystemFont(ofSize: 22, weight: .heavy), .foregroundColor: NSColor.white])
+    bt.draw(at: NSPoint(x: badge.midX - bt.size().width / 2, y: badge.minY + 10))
+}
+
+/// A burst of pixel squares from `c`, `age` seconds after it started (y grows downward).
+func burst(_ c: CGPoint, age: Double, seed: Int, count: Int = 18, speed: Double = 620, size: CGFloat = 14, gravity: Double = 900, lift: Double = 0) {
+    guard age >= 0, age < 1.1 else { return }
+    for k in 0..<count {
+        let a = rnd(seed, k) * 2 * .pi, v = speed * (0.45 + rnd(seed, k + 99))
+        let x = c.x + CGFloat(cos(a) * v * age)
+        let y = c.y + CGFloat((sin(a) * v - lift) * age + 0.5 * gravity * age * age)
+        let s = size * CGFloat(1 - age / 1.1)
+        confettiColors[k % confettiColors.count].withAlphaComponent(CGFloat(1 - age / 1.1)).setFill()
+        NSRect(x: x - s / 2, y: y - s / 2, width: s, height: s).fill()
+    }
+}
+
+func background(_ color: NSColor, floor: Bool) {
+    color.setFill(); NSRect(x: 0, y: 0, width: W, height: H).fill()
+    NSColor.black.withAlphaComponent(0.14).setFill()
+    for gx in stride(from: CGFloat(0), to: W, by: 40) { for gy in stride(from: CGFloat(0), to: H, by: 40) where (Int(gx + gy) / 40) % 2 == 0 {
+        NSRect(x: gx + 18, y: gy + 18, width: 4, height: 4).fill() } }
+    guard floor else { return }
+    rgb(158, 110, 74).setFill(); NSRect(x: 0, y: H - 150, width: W, height: 150).fill()
+    rgb(110, 74, 51).setFill(); NSRect(x: 0, y: H - 156, width: W, height: 6).fill()
+}
+
 // MARK: render
 
 let cursor = NSCursor.arrow.image
 let dash = dashboardImage()
 var roomImg = renderRoom()
 var lastRoomTick = -1
-var phase = 0   // which cast state the room currently shows
+var phase = -1
+let captionY: CGFloat = 270
+let coats = ["Miso", "Mochi", "Pepper", "Sumi", "Oreo"]
+let poofStates: [CatState] = [.permission, .working, .thinking, .done, .question]
+let terminals: [(CGPoint, CGFloat, String, String)] = [   // centre, tilt, project, waited
+    (CGPoint(x: 400, y: 760), -4, "web-app", "47:12"), (CGPoint(x: 680, y: 920), 3, "api", "22:40"),
+    (CGPoint(x: 420, y: 1090), 2, "docs", "31:05"), (CGPoint(x: 670, y: 1260), -3, "mobile", "12:58"),
+    (CGPoint(x: 450, y: 1420), 1, "infra", "08:33"),
+]
+let hookSeconds = 47 * 60 + 12
 
-let frameCount = Int(DURATION * FPS)
+let frameCount = Int(timeline.duration * FPS)
 for f in 0..<frameCount {
     let t = Double(f) / FPS
-    // Story beats change the cats.
-    let wanted = t < 6.4 ? 0 : t < 10.6 ? 1 : t < 11.8 ? 2 : t < 14.6 ? 3 : 4
+    let fr = Int(t * 6)   // sprites animate at 6 fps, like the app
+
+    // Story beats drive the cats in the room.
+    let wanted = t < S(3) ? 0 : t < S(4) + 0.2 ? 1 : t < S(5) ? 2 : t < S(6) - 0.2 ? 3 : 4
     if wanted != phase {
         phase = wanted
         switch phase {
+        case 0: break
         case 1: cast[0].state = .permission; cast[0].stateSince = Date()
-        case 2: cast[0].state = .working
-        case 3: cast[2].state = .done; cast[2].lastMessage = "Tests pass. Want me to open a PR?"; cast[2].stateSince = Date()
+        case 2: cast[0].state = .done; cast[0].stateSince = Date()
+        case 3: cast[0].state = .working; cast[2].state = .done; cast[2].lastMessage = "Tests pass. Want me to open a PR?"; cast[2].stateSince = Date()
         default: cast[2].state = .working
         }
         roomImg = renderRoom(); lastRoomTick = f
-    } else if f - lastRoomTick >= 5 {   // cats animate at 6 fps, like the app
+    } else if f - lastRoomTick >= 5 {
         roomImg = renderRoom(); lastRoomTick = f
     }
 
@@ -178,117 +337,199 @@ for f in 0..<frameCount {
     let ctx = NSGraphicsContext(cgContext: NSGraphicsContext(bitmapImageRep: rep)!.cgContext, flipped: true)
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = ctx
-    // Flip so y grows downward, like a video frame.
     let flip = NSAffineTransform(); flip.translateX(by: 0, yBy: H); flip.scaleX(by: 1, yBy: -1); flip.concat()
 
-    // Background: forest green with a faint pixel grid and a floor.
-    forest.setFill(); NSRect(x: 0, y: 0, width: W, height: H).fill()
-    forestDark.withAlphaComponent(0.35).setFill()
-    for gx in stride(from: CGFloat(0), to: W, by: 40) { for gy in stride(from: CGFloat(0), to: H, by: 40) where (Int(gx + gy) / 40) % 2 == 0 {
-        NSRect(x: gx + 18, y: gy + 18, width: 4, height: 4).fill() } }
-    rgb(158, 110, 74).setFill(); NSRect(x: 0, y: H - 150, width: W, height: 150).fill()
-    rgb(110, 74, 51).setFill(); NSRect(x: 0, y: H - 156, width: W, height: 6).fill()
-
-    // Scene 1: the hook.
-    if t < 2.7 {
-        let pop = easeOutBack(progress(t, 0.1, 0.7))
-        let head = pixelText("@", px: 40)
-        let hs = CGFloat(pop)
-        let hw = head.size.width * hs, hh = head.size.height * hs
-        draw(head, NSRect(x: (W - hw) / 2, y: 520 - hh / 2, width: hw, height: hh), alpha: CGFloat(1 - progress(t, 2.3, 2.7)), crisp: true)
-        caption(["YOUR AI AGENTS"], y: 780, px: 13, t: t, start: 0.5, end: 2.7)
-        caption(["ARE NOW CATS"], y: 920, px: 13, t: t, start: 1.0, end: 2.7, color: orange)
-    }
-
-    // Scenes 2–4: the room under a fake menu bar, with bubbles.
-    if t >= 2.4 && t < 15.6 {
-        let S: CGFloat = 960 / roomImg.size.width
-        let drop = easeOutBack(progress(t, 2.5, 3.2))
-        let leave = easeInOut(progress(t, 15.1, 15.6))
-        let rw = roomImg.size.width * S, rh = roomImg.size.height * S
-        let rx = (W - rw) / 2
-        let ry = 560 - (1 - CGFloat(drop)) * 200 - CGFloat(leave) * 1400
-        let alpha = CGFloat(progress(t, 2.4, 2.7))
-        // A strip of menu bar the room hangs from.
-        rgb(20, 20, 22, alpha * 0.9).setFill(); NSRect(x: 0, y: ry - 70, width: W, height: 54).fill()
-        let paw = pixelText("@", px: 4)
-        draw(paw, NSRect(x: rx + rw - 120, y: ry - 58, width: paw.size.width, height: paw.size.height), alpha: alpha, crisp: true)
-        draw(roomImg, NSRect(x: rx, y: ry, width: rw, height: rh), alpha: alpha, crisp: true)
-
-        caption(["EVERY CLAUDE CODE", "SESSION GETS A CAT"], y: 230, px: 9, t: t, start: 2.7, end: 6.3)
-        caption(["IT ASKS IN", "PLAIN ENGLISH"], y: 230, px: 9, t: t, start: 6.5, end: 11.4)
-        caption(["ANSWER WITHOUT", "SWITCHING WINDOWS"], y: 230, px: 9, t: t, start: 11.6, end: 15.4)
-
-        func showBubble(_ id: String, _ cat: String, _ speech: Speech, from: Double, until: Double, sentAt: Double,
-                        click: (x: CGFloat, y: CGFloat)) {
-            guard t >= from && t < until else { return }
-            let a = catAnchor(id)
-            let tail = a.x - (a.x - 150)   // bubble centred on the cat → tail in the middle
-            let status: BubbleModel.Status = t >= sentAt ? .sent : .idle
-            let img = bubbleImage(cat: cat, speech: speech, status: status, tailX: tail)
-            let bw = img.size.width * S, bh = img.size.height * S
-            let ax = rx + a.x * S, ay = ry + (roomImg.size.height - a.y) * S
-            let bx = min(max(ax - bw / 2, 40), W - bw - 40)
-            let by = ay - 8
-            let pop = CGFloat(easeOutBack(progress(t, from, from + 0.35)))
-            let fade = CGFloat(1 - progress(t, until - 0.25, until))
-            NSGraphicsContext.saveGraphicsState()
-            let tr = NSAffineTransform()
-            tr.translateX(by: ax, yBy: by); tr.scale(by: max(0.01, pop)); tr.translateX(by: -ax, yBy: -by); tr.concat()
-            draw(img, NSRect(x: bx, y: by, width: bw, height: bh), alpha: fade)
-            NSGraphicsContext.restoreGraphicsState()
-            // The cursor glides in and clicks.
-            let target = CGPoint(x: bx + click.x * S, y: by + click.y * S)
-            let move = easeInOut(progress(t, sentAt - 1.4, sentAt - 0.25))
-            if t >= sentAt - 1.4 && t < until {
-                let start = CGPoint(x: W - 120, y: H - 300)
-                let cx = start.x + (target.x - start.x) * CGFloat(move), cy = start.y + (target.y - start.y) * CGFloat(move)
-                let press = t >= sentAt - 0.15 && t < sentAt + 0.05 ? 0.85 : 1.0
-                let cw = cursor.size.width * 3 * press, ch = cursor.size.height * 3 * press
-                if t >= sentAt - 0.1 && t < sentAt + 0.5 {
-                    let r = CGFloat(progress(t, sentAt - 0.1, sentAt + 0.5)) * 90
-                    orange.withAlphaComponent(CGFloat(1 - progress(t, sentAt - 0.1, sentAt + 0.5)) * 0.8).setStroke()
-                    let ring = NSBezierPath(ovalIn: NSRect(x: target.x - r, y: target.y - r, width: r * 2, height: r * 2))
-                    ring.lineWidth = 8; ring.stroke()
+    // ── Scenes 0–1: the hook. Stuck terminals, a climbing timer, then POOF: cats.
+    if t < S(2) + 0.35 {
+        background(night, floor: false)
+        let wipe = easeInOut(progress(t, S(1) + 0.15, S(1) + 0.75))
+        if wipe > 0 {
+            forest.setFill()
+            let r = CGFloat(wipe) * 1250
+            NSBezierPath(ovalIn: NSRect(x: W / 2 - r, y: 1080 - r, width: r * 2, height: r * 2)).fill()
+        }
+        let tension = progress(t, 0.2, S(1))
+        let shake = t < S(1) + 0.25 ? CGFloat(tension * 8) : 0
+        let leave = easeInOut(progress(t, S(2) - 0.05, S(2) + 0.35))
+        let shift = CGPoint(x: CGFloat(rnd(f, 1) - 0.5) * shake, y: CGFloat(rnd(f, 2) - 0.5) * shake - CGFloat(leave) * 1500)
+        cue("whoosh", at: 0.0, t, gain: 0.5)
+        withTransform(scale: 1 + CGFloat(tension) * 0.06, around: CGPoint(x: W / 2, y: 1080), shift: shift) {
+            for (k, term) in terminals.enumerated().reversed() {   // the 47:12 one on top
+                let appearAt = Double(k) * 0.09
+                cue("pop", at: appearAt + 0.05, t, gain: 0.35)
+                let appear = easeOutBack(progress(t, appearAt, appearAt + 0.35))
+                let poofAt = S(1) + 0.3 + Double(k) * 0.13
+                let gone = progress(t, poofAt - 0.12, poofAt)
+                if gone < 1 && appear > 0 {
+                    var waited = term.3
+                    if k == 0 {
+                        let secs = Int(easeOut(progress(t, 0.2, E(0) - 0.2)) * Double(hookSeconds))
+                        waited = String(format: "%02d:%02d", secs / 60, secs % 60)
+                    }
+                    withTransform(scale: CGFloat(appear * (1 - gone)), around: term.0, rotate: term.1) {
+                        drawTerminal(NSRect(x: term.0.x - 330, y: term.0.y - 160, width: 660, height: 320), project: term.2, waited: waited, blink: (f / 8) % 2 == 0)
+                    }
                 }
-                draw(cursor, NSRect(x: cx - 4, y: cy - 4, width: cw, height: ch), alpha: fade)
+                cue("poof", at: poofAt, t, gain: 0.7)
+                burst(term.0, age: t - poofAt, seed: k * 7 + 1, count: 22, speed: 700, size: 18, gravity: 500)
+                let catIn = easeOutBack(progress(t, poofAt, poofAt + 0.4))
+                if catIn > 0 {
+                    let bob = CGFloat(sin((t - poofAt) * 5 + Double(k))) * 8
+                    withTransform(scale: CGFloat(catIn), around: term.0) {
+                        drawCat(coats[k], poofStates[k], center: CGPoint(x: term.0.x, y: term.0.y + bob), px: 10, frame: fr + k, since: t - poofAt)
+                    }
+                }
             }
         }
-        showBubble("a", "Miso", askDeploy, from: 6.8, until: 10.7, sentAt: 9.4, click: (40, 112))
-        showBubble("c", "Pepper", askPR, from: 12.1, until: 15.1, sentAt: 13.9, click: (32, 64))
+        cue("meow", at: S(1) + 0.3 + 4 * 0.13 + 0.2, t, gain: 0.9)
+        // Big red timer under the stack while the hook plays.
+        let timerA = CGFloat(progress(t, 0.15, 0.4) * (1 - progress(t, S(1) + 0.1, S(1) + 0.3)))
+        if timerA > 0 {
+            let secs = Int(easeOut(progress(t, 0.2, E(0) - 0.2)) * Double(hookSeconds))
+            let pulse = 1 + 0.05 * CGFloat(sin(t * 18))
+            drawPixelCentered(String(format: "%02d:%02d", secs / 60, secs % 60), px: 22, y: 1660, scale: pulse, alpha: timerA, color: red)
+        }
     }
 
-    // Scene 5: the dashboard's recent-work card.
-    if t >= 15.3 && t < 19.8 {
-        let rise = easeOut(progress(t, 15.3, 15.9))
-        let leave = progress(t, 19.4, 19.8)
-        // The detail pane only (right of the sidebar), from the top.
-        let src = NSRect(x: 260, y: 760 - 535, width: 620, height: 535)   // bottom-left origin in points
+    // ── Scenes 2–5: the room under the menu bar, with bubbles.
+    if t >= S(2) - 0.1 && t < S(6) + 0.3 {
+        let enter = progress(t, S(2) - 0.1, S(2) + 0.5)
+        let leave = easeInOut(progress(t, S(6) - 0.15, S(6) + 0.3))
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: NSRect(x: 0, y: H * CGFloat(1 - easeOut(progress(t, S(2) - 0.1, S(2) + 0.2))), width: W, height: H)).addClip()
+        background(forest, floor: true)
+        NSGraphicsContext.restoreGraphicsState()
+        cue("whoosh", at: S(2) - 0.05, t, gain: 0.7)
+        let Sc: CGFloat = 960 / roomImg.size.width
+        let rw = roomImg.size.width * Sc, rh = roomImg.size.height * Sc
+        let rx = (W - rw) / 2
+        let ry = 620 - (1 - CGFloat(easeOutBack(enter))) * 900 - CGFloat(leave) * 1700
+        // Camera pushes in on whichever bubble is talking.
+        let a0 = catAnchor("a"), a2 = catAnchor("c")
+        let focusA = CGPoint(x: rx + a0.x * Sc, y: ry + (roomImg.size.height - a0.y) * Sc + 120)
+        let focusC = CGPoint(x: rx + a2.x * Sc, y: ry + (roomImg.size.height - a2.y) * Sc + 120)
+        var focus = CGPoint(x: W / 2, y: ry + rh)
+        var zoom = 1.0
+        if t >= S(3) {
+            zoom = 1 + 0.12 * easeInOut(progress(t, S(3), S(3) + 0.8))
+            let toC = CGFloat(easeInOut(progress(t, S(5) - 0.2, S(5) + 0.4)))
+            focus = CGPoint(x: focusA.x + (focusC.x - focusA.x) * toC, y: focusA.y + (focusC.y - focusA.y) * toC)
+        }
+        let punch = t >= S(4) + 0.2 && t < S(4) + 0.45 ? 0.03 * sin(progress(t, S(4) + 0.2, S(4) + 0.45) * .pi) : 0
+        withTransform(scale: CGFloat(zoom + punch), around: focus) {
+            rgb(20, 20, 22, 0.92).setFill(); NSRect(x: -200, y: ry - 70, width: W + 400, height: 54).fill()
+            let paw = pixelText("@", px: 4)
+            draw(paw, NSRect(x: rx + rw - 140, y: ry - 58, width: paw.size.width, height: paw.size.height), crisp: true)
+            NSAttributedString(string: "9:41", attributes: [.font: NSFont.systemFont(ofSize: 24, weight: .semibold), .foregroundColor: NSColor.white])
+                .draw(at: NSPoint(x: rx + rw - 70, y: ry - 58))
+            draw(roomImg, NSRect(x: rx, y: ry, width: rw, height: rh), crisp: true)
+
+            func showBubble(_ id: String, _ cat: String, _ speech: Speech, from: Double, until: Double, clickAt: Double,
+                            click: (x: CGFloat, y: CGFloat), confetti: Bool) {
+                guard t >= from && t < until else { return }
+                cue("pop", at: from, t, gain: 0.8)
+                let a = catAnchor(id)
+                let img = bubbleImage(cat: cat, speech: speech, sent: t >= clickAt && confetti)
+                let bw = img.size.width * Sc, bh = img.size.height * Sc
+                let ax = rx + a.x * Sc, ay = ry + (roomImg.size.height - a.y) * Sc
+                let bx = min(max(ax - bw / 2, 40), W - bw - 40), by = ay - 8
+                let pop = CGFloat(easeOutBack(progress(t, from, from + 0.35)))
+                let fade = CGFloat(1 - progress(t, until - 0.2, until))
+                withTransform(scale: pop, around: CGPoint(x: ax, y: by)) {
+                    draw(img, NSRect(x: bx, y: by, width: bw, height: bh), alpha: fade)
+                }
+                let target = CGPoint(x: bx + click.x * Sc, y: by + click.y * Sc)
+                if confetti { burst(target, age: t - clickAt, seed: 42, count: 36, speed: 650, size: 16, gravity: 1500, lift: 600) }
+                guard t >= clickAt - 1.2 else { return }
+                cue("click", at: clickAt, t)
+                if confetti { cue("chime", at: clickAt + 0.05, t, gain: 0.8) }
+                let move = easeInOut(progress(t, clickAt - 1.2, clickAt - 0.12))
+                let start = CGPoint(x: W - 100, y: H - 260)
+                let cx = start.x + (target.x - start.x) * CGFloat(move), cy = start.y + (target.y - start.y) * CGFloat(move)
+                let press: CGFloat = t >= clickAt - 0.1 && t < clickAt + 0.06 ? 0.82 : 1
+                if t >= clickAt - 0.05 && t < clickAt + 0.5 {
+                    let k = progress(t, clickAt - 0.05, clickAt + 0.5)
+                    orange.withAlphaComponent(CGFloat(1 - k) * 0.9).setStroke()
+                    let r = CGFloat(k) * 80
+                    let ring = NSBezierPath(ovalIn: NSRect(x: target.x - r, y: target.y - r, width: r * 2, height: r * 2))
+                    ring.lineWidth = 7; ring.stroke()
+                }
+                draw(cursor, NSRect(x: cx - 4, y: cy - 4, width: cursor.size.width * 2.6 * press, height: cursor.size.height * 2.6 * press), alpha: fade)
+            }
+            showBubble("a", "Miso", askDeploy, from: S(3) + 0.35, until: S(5) - 0.15, clickAt: S(4) + 0.2, click: (32, 112), confetti: true)
+            showBubble("c", "Pepper", askPR, from: S(5) + 0.2, until: S(6) - 0.1, clickAt: max(S(5) + 1.5, E(5) - 0.25), click: (32, 64), confetti: false)
+        }
+        cue("alert", at: S(3), t, gain: 0.5)
+    }
+
+    // ── Scene 6: the dashboard's recent-work card.
+    if t >= S(6) - 0.1 && t < S(7) + 0.3 {
+        if t >= S(6) + 0.3 { background(forest, floor: true) }
+        cue("whoosh", at: S(6) - 0.1, t, gain: 0.6)
+        let rise = easeOutBack(progress(t, S(6) - 0.1, S(6) + 0.45))
+        let leave = easeInOut(progress(t, S(7) - 0.1, S(7) + 0.3))
+        let src = NSRect(x: 260, y: 760 - 535, width: 620, height: 535)
         let scale: CGFloat = 1000 / src.width
         let dw = src.width * scale, dh = src.height * scale
-        let dy = 560 + (1 - CGFloat(rise)) * 600
-        NSGraphicsContext.saveGraphicsState()
-        let clip = NSBezierPath(roundedRect: NSRect(x: (W - dw) / 2, y: dy, width: dw, height: dh), xRadius: 28, yRadius: 28)
-        clip.addClip()
-        dash.draw(in: NSRect(x: (W - dw) / 2, y: dy, width: dw, height: dh), from: src, operation: .sourceOver,
-                  fraction: CGFloat(1 - leave), respectFlipped: true, hints: nil)
-        NSGraphicsContext.restoreGraphicsState()
-        caption(["SEE WHAT IT", "ACTUALLY GOT DONE"], y: 230, px: 9, t: t, start: 15.5, end: 19.8)
+        let dx = (W - dw) / 2
+        let dy = 600 + (1 - CGFloat(rise)) * 1200 - CGFloat(leave) * 1600
+        let push = 1 + 0.05 * CGFloat(progress(t, S(6), S(7)))
+        withTransform(scale: push, around: CGPoint(x: W / 2, y: dy + 260)) {
+            let card = NSRect(x: dx, y: dy, width: dw, height: dh)
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow(); shadow.shadowColor = NSColor.black.withAlphaComponent(0.45)
+            shadow.shadowBlurRadius = 40; shadow.shadowOffset = NSSize(width: 0, height: -20); shadow.set()
+            cream.setFill(); NSBezierPath(roundedRect: card, xRadius: 28, yRadius: 28).fill()
+            NSGraphicsContext.restoreGraphicsState()
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(roundedRect: card, xRadius: 28, yRadius: 28).addClip()
+            dash.draw(in: card, from: src, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            NSGraphicsContext.restoreGraphicsState()
+            // Highlight the "working on" summary as it's mentioned.
+            let glow = progress(t, S(6) + 0.6, S(6) + 1.0) * (1 - progress(t, S(7) - 0.3, S(7)))
+            if glow > 0 {
+                orange.withAlphaComponent(CGFloat(glow)).setStroke()
+                let box = NSBezierPath(roundedRect: NSRect(x: dx + 12, y: dy + 345, width: dw - 24, height: 215), xRadius: 14, yRadius: 14)
+                box.lineWidth = 6; box.stroke()
+            }
+        }
     }
 
-    // Scene 6: end card.
-    if t >= 19.6 {
-        let pop = easeOutBack(progress(t, 19.7, 20.3))
-        let logo = pixelText("@ AGENT CATS", px: 13)
-        let lw = logo.size.width * CGFloat(pop), lh = logo.size.height * CGFloat(pop)
-        draw(logo, NSRect(x: (W - lw) / 2, y: 700 - lh / 2, width: lw, height: lh), crisp: true)
-        caption(["FOR CLAUDE CODE", "AND CODEX ON MAC"], y: 860, px: 7, t: t, start: 20.2, end: 30)
-        caption(["LINK IN BIO"], y: 1180, px: 8, t: t, start: 20.8, end: 30, color: orange)
+    // ── Scene 7: end card with the gang.
+    if t >= S(7) - 0.1 {
+        let enter = easeOut(progress(t, S(7) - 0.1, S(7) + 0.25))
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: NSRect(x: 0, y: H * CGFloat(1 - enter), width: W, height: H)).addClip()
+        background(forest, floor: true)
+        cue("pop", at: S(7) + 0.05, t, gain: 0.9)
+        drawPixelCentered("@ AGENT CATS", px: 13, y: 700, scale: CGFloat(easeOutBack(progress(t, S(7) + 0.05, S(7) + 0.55))))
+        drawPixelCentered("FOR CLAUDE CODE & CODEX", px: 6, y: 830, alpha: CGFloat(progress(t, S(7) + 0.5, S(7) + 0.8)))
+        let gang: [CatState] = [.working, .thinking, .done, .idle, .question]
+        for k in 0..<5 {
+            let at = S(7) + 0.4 + Double(k) * 0.12
+            let hop = easeOutBack(progress(t, at, at + 0.35))
+            guard hop > 0 else { continue }
+            let x = W / 2 + CGFloat(k - 2) * 190
+            let y = 1120 + (1 - CGFloat(hop)) * 400 - CGFloat(max(0, sin((t - at) * 6 + Double(k)))) * 14
+            drawCat(coats[k], gang[k], center: CGPoint(x: x, y: y), px: 6, frame: fr + k, since: t - at)
+        }
+        let cta = progress(t, S(7) + 0.9, S(7) + 1.2)
+        if cta > 0 {
+            cue("chime", at: S(7) + 0.9, t, gain: 0.5)
+            let bounce = CGFloat(abs(sin(t * 5))) * 16
+            drawPixelCentered("LINK IN BIO", px: 9, y: 1370, scale: CGFloat(easeOutBack(cta)), color: orange)
+            drawPixelCentered("V", px: 7, y: 1460 + bounce, alpha: CGFloat(cta), color: orange)
+        }
+        NSGraphicsContext.restoreGraphicsState()
     }
+
+    for i in 0..<L.count { caption(i, t: t, y: captionY) }
 
     NSGraphicsContext.restoreGraphicsState()
     let png = rep.representation(using: .png, properties: [:])!
     try! png.write(to: outDir.appendingPathComponent(String(format: "f%04d.png", f)))
-    if f % 60 == 0 { print("frame \(f)/\(frameCount)") }
+    if f % 90 == 0 { print("frame \(f)/\(frameCount)") }
 }
-print("rendered \(frameCount) frames to \(outDir.path)")
+let sfx = try! JSONSerialization.data(withJSONObject: cues, options: [.prettyPrinted])
+try! sfx.write(to: outDir.appendingPathComponent("sfx.json"))
+print("rendered \(frameCount) frames, \(cues.count) sound cues")

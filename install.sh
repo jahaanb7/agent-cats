@@ -17,3 +17,10 @@ if ! mv "$INSTALL_STAGE/AgentCats.app" "$DESTINATION"; then
   exit 1
 fi
 print "Installed $DESTINATION"
+# Restart a running copy so the new build is the one in use (replacing files doesn't).
+if pgrep -f "$DESTINATION/Contents/MacOS/AgentCats" >/dev/null; then
+  osascript -e 'tell application id "local.agentcats.app" to quit' >/dev/null 2>&1 || true
+  for _ in {1..20}; do pgrep -f "$DESTINATION/Contents/MacOS/AgentCats" >/dev/null || break; sleep 0.25; done
+  pkill -f "$DESTINATION/Contents/MacOS/AgentCats" 2>/dev/null || true
+  open "$DESTINATION" && print "Restarted Agent Cats"
+fi
