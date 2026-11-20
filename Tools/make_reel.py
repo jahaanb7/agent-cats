@@ -86,6 +86,11 @@ def sound_bank(work, tl):
         "poof": ("0.45*(random(0)*2-1)*exp(-14*t)+0.6*sin(2*PI*(170-220*t)*t)*exp(-11*t)", 0.32, "lowpass=f=2600"),
         "chime": ("0.3*(sin(2*PI*1318.5*t)+0.8*gte(t,0.09)*sin(2*PI*1975.5*t))*exp(-4.5*t)", 1.0, None),
         "alert": ("0.28*sin(2*PI*880*t)*(lt(t,0.07)+gte(t,0.12)*lt(t,0.19))", 0.22, None),
+        "glitch": ("0.45*(random(0)*2-1)*lt(mod(t,0.03),0.016)+0.25*sgn(sin(2*PI*90*t))*lt(t,0.12)", 0.2, "lowpass=f=6000"),
+        "notify": ("0.28*(sin(2*PI*1046.5*t)*lt(t,0.11)+gte(t,0.1)*sin(2*PI*1568*t))*exp(-6*t)", 0.6, None),
+        "roll": ("0.3*(random(0)*2-1)*exp(-260*mod(t,0.045))*lt(t,0.7)", 0.75, "highpass=f=1800"),
+        "thud": ("0.9*sin(2*PI*(95-70*t)*t)*exp(-13*t)", 0.35, "lowpass=f=400"),
+        "bell": ("0.26*(sin(2*PI*2093*t)+0.6*sin(2*PI*2637*t)+0.35*sin(2*PI*3136*t)+0.2*sin(2*PI*4186*t))*exp(-3.2*t)*(1+0.25*sin(2*PI*8*t))", 1.5, None),
         # A synthesized "mrrow?": a gliding voice with harmonics.
         "meow": ("st(0,2*PI*(520*t+460*0.6/PI*(1-cos(PI*t/0.6))+6*sin(2*PI*7*t)/(2*PI*7)));"
                  "0.33*pow(sin(PI*t/0.6),0.7)*(sin(ld(0))+0.55*sin(2*ld(0))+0.3*sin(3*ld(0))+0.15*sin(4*ld(0)))",
@@ -153,14 +158,21 @@ def main():
         run("swiftc", "-O", "-swift-version", "5", "-target", "arm64-apple-macos14", "-o", work / "reel",
             *sorted(Path("Sources/Shared").glob("*.swift")), *sorted(Path("Sources/Core").glob("*.swift")),
             *app_sources, "Tools/Reel/main.swift")
-        print("3/5 rendering frames"); run(work / "reel", work / "timeline.json", work / "frames")
+        print("3/5 rendering frames")
+        silent = work / "video.mp4"
+        render = subprocess.Popen([str(work / "reel"), str(work / "timeline.json"), str(work / "frames")], stdout=subprocess.PIPE)
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", "1080x1920", "-r", "30",
+                        "-i", "-", "-c:v", "libx264", "-preset", "slow", "-crf", "17", "-pix_fmt", "yuv420p", str(silent)],
+                       stdin=render.stdout, check=True)
+        render.stdout.close()
+        if render.wait() != 0:
+            sys.exit("renderer failed")
         cues = json.loads((work / "frames" / "sfx.json").read_text())
         print("4/5 music, sound effects, mix"); paths, hook_end = sound_bank(work, tl)
         audio = mix(work, clips, tl, cues, paths, hook_end)
         print("5/5 encoding")
         Path("dist").mkdir(exist_ok=True)
-        run("ffmpeg", "-loglevel", "error", "-y", "-framerate", "30", "-i", work / "frames" / "f%04d.png", "-i", audio,
-            "-c:v", "libx264", "-preset", "slow", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "copy", "-t", str(tl["duration"]),
+        run("ffmpeg", "-loglevel", "error", "-y", "-i", silent, "-i", audio, "-c:v", "copy", "-c:a", "copy", "-t", str(tl["duration"]),
             "-movflags", "+faststart", "dist/agent-cats-reel.mp4")
         if os.environ.get("REEL_KEEP"):
             print(f"kept work files in {work}")

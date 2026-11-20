@@ -50,8 +50,8 @@ enum PixelFont {
         ":": [".", "#", ".", ".", ".", "#", "."],
         "/": ["....#", "...#.", "...#.", "..#..", ".#...", ".#...", "#...."],
         " ": ["..", "..", "..", "..", "..", "..", ".."],
-        // The Agent Cats mark: ears, a prompt ">" eye and a cursor "_" eye (cut out of the head).
-        "@": ["#.......#", "##.....##", "##.######", "###.#####", "##.##...#", "#########", ".#######."],
+        // A little cat head: ears, eyes, nose.
+        "@": ["#.....#", "##...##", "#######", "#.###.#", "#######", "###.###", ".#####."],
     ]
 
     /// The text as an image: `fill` letters over a `shadow` one pixel down-right (an embossed arcade
