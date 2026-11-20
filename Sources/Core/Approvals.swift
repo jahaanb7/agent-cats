@@ -30,7 +30,12 @@ struct PendingApproval: Identifiable {
     let tool: String
     let input: String
     let reply: HookReply
+    /// One sentence for the cat to say ("I want to run the test suite.") and the short tool label.
+    let ask: String
+    let detail: String
     var expiresAt: Date { reply.deadline }
+    /// Same tool + same input: how a later PostToolUse is matched back to this request.
+    var key: String { tool + "\u{0}" + input }
 }
 
 /// Used only on Monitor.queue; historical/spooled events never create approvals.
@@ -42,9 +47,19 @@ final class ApprovalStore {
         guard let input = object["tool_input"] as? [String: Any],
               let data = try? JSONSerialization.data(withJSONObject: input, options: [.prettyPrinted, .sortedKeys]),
               let text = String(data: data, encoding: .utf8) else { reply.complete([:]); return }
-        requests.append(PendingApproval(sessionID: object["session_id"] as! String,
-                                        tool: object["tool_name"] as! String, input: text, reply: reply))
+        let tool = object["tool_name"] as! String
+        requests.append(PendingApproval(sessionID: object["session_id"] as! String, tool: tool, input: text, reply: reply,
+                                        ask: Summary.toolAsk(tool, input), detail: toolLabel(tool, input)))
     }
+
+    static func key(tool: String?, input: Any?) -> String? {
+        guard let tool, let input = input as? [String: Any],
+              let data = try? JSONSerialization.data(withJSONObject: input, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        return tool + "\u{0}" + text
+    }
+
+    func first(session: String) -> PendingApproval? { requests.first { $0.sessionID == session && $0.reply.pending } }
 
     @discardableResult func resolve(_ id: String, decision: ApprovalProtocol.Decision, message: String? = nil) -> Bool {
         guard let request = requests.first(where: { $0.id == id }) else { return false }
@@ -53,8 +68,12 @@ final class ApprovalStore {
         return accepted
     }
 
-    func cancel(session: String? = nil) {
-        for request in requests where session == nil || request.sessionID == session { request.reply.complete([:]) }
+    /// Releases waiting requests to the agent's own prompt: all of them, one session's, or (with
+    /// `key`) only the one a finished tool call belongs to, which means it was answered elsewhere.
+    func cancel(session: String? = nil, key: String? = nil) {
+        for request in requests where (session == nil || request.sessionID == session) && (key == nil || request.key == key) {
+            request.reply.complete([:])
+        }
         sweep()
     }
 

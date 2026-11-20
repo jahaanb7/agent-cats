@@ -14,8 +14,16 @@ swiftc "${FLAGS[@]}" -module-name AgentCatsApp -o "$APP/Contents/MacOS/AgentCats
   Sources/Shared/*.swift Sources/Core/*.swift Sources/App/*.swift
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Art/cats.json "$APP/Contents/Resources/cats.json"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp "$BUILD_DIR/agentcats-hook" "$APP/Contents/MacOS/agentcats-hook"
-codesign --force --sign - "$APP"
+# macOS keys Accessibility to the designated requirement. Ad-hoc signing defaults to the cdhash, which
+# changes every build and silently voids the grant, so pin it to the bundle identifier instead.
+# Set SIGN_IDENTITY to a real certificate (e.g. "Developer ID Application: …") to use that.
+if [[ -n "${SIGN_IDENTITY:-}" ]]; then
+  codesign --force --options runtime --sign "$SIGN_IDENTITY" "$APP"
+else
+  codesign --force --sign - -r='designated => identifier "local.agentcats.app"' "$APP"
+fi
 codesign --verify --deep --strict "$APP"
 plutil -lint "$APP/Contents/Info.plist"
 # A compile/signing failure leaves the previous app intact.

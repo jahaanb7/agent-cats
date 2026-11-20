@@ -2,16 +2,31 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Agent Cats</string>
-  <key>CFBundleDisplayName</key><string>Agent Cats</string>
-  <key>CFBundleIdentifier</key><string>local.agentcats.app</string>
-  <key>CFBundleExecutable</key><string>AgentCats</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.3.1</string>
-  <key>CFBundleVersion</key><string>4</string>
-  <key>LSMinimumSystemVersion</key><string>14.0</string>
-  <key>LSUIElement</key><true/>
-  <key>NSHighResolutionCapable</key><true/>
-  <key>NSAppleEventsUsageDescription</key><string>Agent Cats switches to the terminal tab of a session and types the replies you give its cat.</string>
+	<key>CFBundleDisplayName</key>
+	<string>Agent Cats</string>
+	<key>CFBundleExecutable</key>
+	<string>AgentCats</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>local.agentcats.app</string>
+	<key>CFBundleName</key>
+	<string>Agent Cats</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.4.1</string>
+	<key>CFBundleVersion</key>
+	<string>6</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Agent Cats switches to the terminal tab of a session and types the replies you give its cat.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Agent Cats</string>
 </dict>
 </plist>

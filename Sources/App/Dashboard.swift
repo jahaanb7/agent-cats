@@ -56,6 +56,17 @@ final class DashboardModel: ObservableObject {
 
     var onDecision: ((String, ApprovalProtocol.Decision) -> Void)?
 
+    /// Removes every Agent Cats hook (with backups). Returns a message for the user.
+    func disconnectHooks() -> String {
+        do {
+            let changes = try installer.plan(remove: true)
+            guard !changes.isEmpty else { return "Agent Cats hooks aren't installed." }
+            let backups = try installer.apply(changes)
+            hooksReady = false
+            return "Hooks removed. Backups: \(backups.count) file\(backups.count == 1 ? "" : "s") in ~/Library/Application Support/AgentCats/backups. Restart your agent sessions."
+        } catch { return error.localizedDescription }
+    }
+
     func decide(_ request: PendingApproval, _ decision: ApprovalProtocol.Decision) {
         approvals.removeAll { $0.id == request.id }
         decisionMessage = nil
@@ -66,8 +77,23 @@ final class DashboardModel: ObservableObject {
 final class DashboardController {
     let model = DashboardModel()
     private var window: NSWindow?
+    /// Called when the window opens, so it can be filled with fresh data first.
+    var willShow: (() -> Void)?
+
+    /// Live data is only pushed to the dashboard while you can see it: a hidden SwiftUI window
+    /// still re-renders on every change, and busy agents change things many times a second.
+    var isVisible: Bool { window?.isVisible == true && window?.isMiniaturized == false }
+
+    /// First launch (or hooks pointing at another copy of the app): open straight into setup.
+    func showSetupIfNeeded() {
+        model.refreshHookStatus()
+        guard model.hooksReady == false else { return }
+        show()
+        model.previewHooks()
+    }
 
     func show(session: String? = nil) {
+        willShow?()
         if let session { model.selection = session }
         model.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         model.refreshHookStatus()
@@ -371,7 +397,10 @@ struct DashboardView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            Text("AGENT CATS").font(Pix.mono(12, .heavy)).foregroundStyle(Pix.cream)
+            Image(nsImage: PixelFont.image("@ AGENT CATS", px: 2.5, fill: NSColor(Pix.cream),
+                                           shadow: NSColor(Pix.ink), accent: NSColor(Pix.orange)))
+                .interpolation(.none)
+                .accessibilityLabel("Agent Cats")
             Rectangle().fill(Pix.cream.opacity(0.35)).frame(width: 4, height: 4)
             Text(subtitle).font(.system(size: 11, weight: .medium)).foregroundStyle(Pix.cream.opacity(0.75))
             Spacer()
@@ -379,7 +408,7 @@ struct DashboardView: View {
         }
         .padding(.leading, 80)          // clear the window buttons
         .padding(.trailing, 14)
-        .frame(height: 38)
+        .frame(height: 44)
         .background(Pix.forest)
         .overlay(alignment: .bottom) { Rectangle().fill(Pix.ink.opacity(0.5)).frame(height: 2) }
     }
@@ -497,6 +526,7 @@ struct DashboardView: View {
                 Text(message).font(.system(size: 11)).foregroundStyle(Pix.soft)
             }
             if s.wantsYou && requests.isEmpty { waitingCard(s) }
+            recentWork(s)
             stats(s)
             activity(s)
         }
@@ -524,9 +554,13 @@ struct DashboardView: View {
                 }
                 HStack(spacing: 8) {
                     Button("OPEN TERMINAL") { TerminalJump.open(s) }
-                        .disabled(s.pid == nil && s.tty == nil)
+                        .disabled(s.state == .gone)
                     if !s.cwd.isEmpty {
                         Button("FOLDER") { NSWorkspace.shared.open(URL(fileURLWithPath: s.cwd)) }
+                    }
+                    if s.state != .gone {
+                        Button("END SESSION") { SessionEnder.confirmAndEnd(s, cat: entry.cat) }
+                            .help("Stop this agent, and optionally close its terminal")
                     }
                 }
                 .buttonStyle(PixelButtonStyle())
@@ -541,9 +575,11 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Rectangle().fill(Pix.orange).frame(width: 8, height: 8)
-                Text("CAN I RUN THIS?").font(Pix.mono(11, .heavy)).foregroundStyle(Pix.ink)
+                Text("CAN I DO THIS?").font(Pix.mono(11, .heavy)).foregroundStyle(Pix.ink)
                 Text(request.tool).font(Pix.mono(11, .regular)).foregroundStyle(Pix.soft)
             }
+            Text(request.ask).font(.system(size: 14, weight: .semibold)).foregroundStyle(Pix.ink)
+                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             requestPreview(request.input)
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 let remaining = max(0, request.expiresAt.timeIntervalSince(ctx.date))
@@ -577,9 +613,6 @@ struct DashboardView: View {
             if let command = obj?["command"] as? String {
                 Text("$ " + command).font(Pix.mono(13, .semibold)).foregroundStyle(Pix.ink)
                     .lineLimit(6).fixedSize(horizontal: false, vertical: true)
-                if let why = obj?["description"] as? String {
-                    Text(why).font(.system(size: 11)).foregroundStyle(Pix.soft)
-                }
             } else if let path = obj?["file_path"] as? String {
                 Text(path).font(Pix.mono(12, .semibold)).foregroundStyle(Pix.ink).lineLimit(2).truncationMode(.middle)
             } else {
@@ -602,7 +635,8 @@ struct DashboardView: View {
                 Text(s.state == .error ? "I HIT A SNAG" : s.state == .permission ? "WAITING FOR YOUR OK" : "WAITING FOR YOU")
                     .font(Pix.mono(11, .heavy)).foregroundStyle(Pix.ink)
             }
-            Text((s.state == .done ? s.lastMessage : s.activity ?? s.lastMessage) ?? "Open the session to see what it needs.")
+            Text((s.state == .done || s.state == .question ? s.lastMessage.map { Summary.ask($0) }
+                  : s.ask ?? s.activity ?? s.lastMessage) ?? "Open the session to see what it needs.")
                 .font(.system(size: 13)).foregroundStyle(Pix.ink).lineLimit(8).textSelection(.enabled)
             Text("Click the cat in the room to answer, or open the terminal.")
                 .font(.system(size: 11)).foregroundStyle(Pix.soft)
@@ -610,6 +644,93 @@ struct DashboardView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .pixelCard()
+    }
+
+    /// What you asked for lately, what the agent did about it, and how it turned out.
+    @ViewBuilder private func recentWork(_ s: Session) -> some View {
+        let tasks = s.tasks.filter { !$0.prompt.isEmpty || !$0.tally.isEmpty || $0.reply != nil }
+        if let latest = tasks.last {
+            let busy = latest.endedAt == nil && [.working, .thinking, .permission, .question].contains(s.state)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(busy ? "WORKING ON" : "LAST TASK").font(Pix.mono(10, .heavy)).foregroundStyle(Pix.soft)
+                    Spacer()
+                    Text(Self.ago(latest.startedAt)).font(.system(size: 10)).foregroundStyle(Pix.soft.opacity(0.8))
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    if !latest.prompt.isEmpty {
+                        Text("\u{201C}\(clipped(latest.prompt, 220))\u{201D}")
+                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(Pix.ink)
+                            .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let outcome = busy ? nil : latest.outcome {
+                        workLine("RESULT", outcome, Color(red: 0.30, green: 0.45, blue: 0.62))
+                    } else if busy, let now = s.ask.map(Speech.ongoing) ?? s.activity {
+                        workLine("NOW", now, Pix.orange)
+                    }
+                    if !latest.tally.isEmpty { workLine("DID", latest.tally, Pix.green) }
+                    if !latest.files.isEmpty {
+                        workLine("FILES", fileList(latest.files), Pix.green, mono: true)
+                    }
+                    if !latest.steps.isEmpty {
+                        workLine("STEPS", latest.steps.suffix(4).joined(separator: " → "), Pix.soft)
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .pixelCard(lift: 2)
+                .textSelection(.enabled)
+                let earlier = Array(tasks.dropLast().suffix(4).reversed())
+                if !earlier.isEmpty {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("EARLIER").font(Pix.mono(9, .heavy)).foregroundStyle(Pix.soft)
+                        ForEach(Array(earlier.enumerated()), id: \.offset) { _, t in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(t.prompt.isEmpty ? "(picked up mid-task)" : clipped(t.prompt, 90))
+                                    .font(.system(size: 12, weight: .medium)).foregroundStyle(Pix.ink).lineLimit(1)
+                                Text([t.outcome.map { clipped($0, 140) }, t.tally.isEmpty ? nil : t.tally].compactMap { $0 }.joined(separator: "  ·  "))
+                                    .font(.system(size: 11)).foregroundStyle(Pix.soft).lineLimit(2)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                    .textSelection(.enabled)
+                }
+                let allFiles = Set(tasks.flatMap(\.files))
+                if tasks.count > 1 || allFiles.count > latest.files.count {
+                    Text("This session: \(tasks.count) task\(tasks.count == 1 ? "" : "s") · \(allFiles.count) file\(allFiles.count == 1 ? "" : "s") changed · \(tasks.reduce(0) { $0 + $1.commands }) commands")
+                        .font(.system(size: 10.5)).foregroundStyle(Pix.soft).padding(.horizontal, 4)
+                }
+            }
+        }
+    }
+
+    private func workLine(_ label: String, _ text: String, _ tint: Color, mono: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label).font(Pix.mono(9, .heavy)).foregroundStyle(tint).frame(width: 44, alignment: .leading)
+            Text(text).font(mono ? Pix.mono(11, .regular) : .system(size: 12)).foregroundStyle(Pix.ink)
+                .lineLimit(4).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func fileList(_ files: [String]) -> String {
+        let shown = files.suffix(5)
+        return shown.joined(separator: ", ") + (files.count > shown.count ? " +\(files.count - shown.count) more" : "")
+    }
+
+    private func clipped(_ s: String, _ n: Int) -> String {
+        let one = s.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        return one.count > n ? String(one.prefix(n - 1)) + "…" : one
+    }
+
+    static func ago(_ d: Date) -> String {
+        let s = Int(Date().timeIntervalSince(d))
+        switch s {
+        case ..<60: return "just now"
+        case ..<3600: return "\(s / 60) min ago"
+        case ..<86400: return "\(s / 3600) h ago"
+        default: return "\(s / 86400) d ago"
+        }
     }
 
     private func stats(_ s: Session) -> some View {

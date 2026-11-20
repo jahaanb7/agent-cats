@@ -4,6 +4,8 @@ import QuartzCore
 /// The cat tree: one pixel-art tree image plus a layer per visible cat.
 /// Everything is drawn in art pixels and scaled with nearest-neighbour filtering.
 final class CatTreeView: NSView {
+    // The panel never becomes key, so without this the first click on an inactive panel can be eaten.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     struct Entry { let session: Session; let cat: String }
 
     var onTreeClick: (() -> Void)?

@@ -20,7 +20,7 @@ final class BubbleController {
 
     let model = BubbleModel()
     private let panel = BubblePanel()
-    private let host: NSHostingView<BubbleView>
+    private let host: FirstClickHostingView<BubbleView>
     private let env: Env
 
     private var entries: [String: CatTreeView.Entry] = [:]
@@ -39,15 +39,21 @@ final class BubbleController {
 
     init(env: Env) {
         self.env = env
-        host = NSHostingView(rootView: BubbleView(model: model))
+        host = FirstClickHostingView(rootView: BubbleView(model: model))
         host.wantsLayer = true
         host.layer?.backgroundColor = .clear
         panel.contentView = host
-        panel.onEscape = { [weak self] in self?.close() }
-        model.onClose = { [weak self] in self?.close() }
+        // × and Esc mean "not here": a waiting permission request goes back to the terminal's prompt.
+        panel.onEscape = { [weak self] in self?.close(release: true) }
+        model.onClose = { [weak self] in self?.close(release: true) }
         model.onChoice = { [weak self] c in self?.perform(c.reply, text: nil) }
         model.onSendText = { [weak self] t in self?.sendText(t) }
         model.onOpenTerminal = { [weak self] in self?.openTerminal() }
+        model.onEndSession = { [weak self] in
+            guard let self, let id = self.sessionID, let e = self.entries[id] else { return }
+            self.close(release: true)
+            SessionEnder.confirmAndEnd(e.session, cat: e.cat)
+        }
         model.onNext = { [weak self] in self?.showNext() }
         model.onChooseFiles = { [weak self] in self?.chooseFiles() }
         model.onScreenshot = { [weak self] in self?.takeScreenshot() }
@@ -98,12 +104,15 @@ final class BubbleController {
 
     /// - dismissed: you closed it on purpose (×, Esc, click). Otherwise an unanswered question will
     ///   speak up again when its cat is next on screen.
-    func close(dismissed: Bool = true) {
+    /// - release: hand a waiting permission request back to the terminal. Only × and Esc do this;
+    ///   clicking the cat, tucking the room or the bubble closing on its own keep the request here,
+    ///   so Allow still works when the bubble comes back (or from the dashboard).
+    func close(dismissed: Bool = true, release: Bool = false) {
         if let id = sessionID, !dismissed, model.speech?.needsAnswer == true, model.status != .sent {
             spoken[id] = nil
         }
         pendingClose?.cancel(); pendingClose = nil
-        if let id = sessionID { releaseHook(id) }
+        if release, let id = sessionID { releaseHook(id) }
         sessionID = nil
         fadeOut()
         DispatchQueue.main.async { [weak self] in
@@ -212,11 +221,24 @@ final class BubbleController {
     /// Called after every snapshot is applied to the tree and the room has been laid out.
     func update(entries list: [CatTreeView.Entry]) {
         entries = Dictionary(uniqueKeysWithValues: list.map { ($0.session.id, $0) })
+        reviveIfHidden()
         targets = targets.filter { entries[$0.key] != nil }
         refreshOpenBubble()
         for e in list { considerSpeaking(e.session) }
         speakNext()
         updateWaiting()
+    }
+
+    /// macOS can take the bubble off screen behind our back (a full-screen Space closing, a display
+    /// change, sleep). The bubble then counts as open but can't be seen, and every later cat waits
+    /// behind it. Put it back, unless we hid it on purpose (screenshot, typing into a terminal).
+    func reviveIfHidden() {
+        guard let id = sessionID, !panel.isVisible, !capturing, model.status != .sending else { return }
+        guard env.catRect(id) != nil else { close(dismissed: false); return }
+        StartupLog.write("Bubble was off screen while open; showing it again")
+        placeNow()
+        panel.alphaValue = 1
+        panel.orderFrontRegardless()
     }
 
     private func refreshOpenBubble() {
@@ -442,7 +464,7 @@ final class BubbleController {
                 switch outcome {
                 case .sent: self.finishSend(.sent, id: id)
                 case .needsAccessibility:
-                    self.finishSend(.failed("Allow Agent Cats in System Settings › Privacy & Security › Accessibility, then try again."), id: id)
+                    self.finishSend(.failed("Turn on Agent Cats in System Settings › Privacy & Security › Accessibility, then press send again."), id: id)
                 case .failed(let why): self.finishSend(.failed(why), id: id)
                 }
             }

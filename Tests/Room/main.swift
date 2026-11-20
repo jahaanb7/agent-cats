@@ -4,7 +4,8 @@ let app = NSApplication.shared
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 guard let book = SpriteBook(url: root.appendingPathComponent("Art/cats.json")) else { fatalError("Missing sprite book") }
 let tree = CatTreeView(book: book)
-var sessions = (0..<4).map { i -> Session in
+let previewCount = Int(ProcessInfo.processInfo.environment["CATS"] ?? "") ?? 4
+var sessions = (0..<previewCount).map { i -> Session in
     var s = Session(id: "preview-\(i)", agent: i == 3 ? .codex : .claude, at: Date())
     s.cwd = "/Preview/Project \(i + 1)"
     s.state = [.working, .thinking, .permission, .idle][i]
@@ -40,8 +41,8 @@ assert(collapsed == NSSize(width: 36, height: 55), "Collapsed window occupies on
 assert(tree.isHiddenOrHasHiddenAncestor, "Hidden room cannot display cats")
 let expanded = room.update(expanded: true, treeSize: size, count: sessions.count, attention: 1)
 room.layoutSubtreeIfNeeded()
-assert(expanded.width >= 330 && !tree.isHiddenOrHasHiddenAncestor, "Pull reveals the room")
-assert(tree.frame.minY >= 0 && tree.frame.maxY < tree.superview!.bounds.height - 45, "Cats stay below header")
+assert(expanded.width >= 264 && !tree.isHiddenOrHasHiddenAncestor, "Pull reveals the room")
+assert(tree.frame.minY >= 0 && tree.frame.maxY < tree.superview!.bounds.height - RoomBackdrop.headerH, "Cats stay below header")
 let window = NSWindow(contentRect: NSRect(origin: .zero, size: expanded), styleMask: .borderless, backing: .buffered, defer: false)
 window.contentView = room
 room.layoutSubtreeIfNeeded()

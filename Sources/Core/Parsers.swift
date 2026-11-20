@@ -104,6 +104,14 @@ public enum HookParser {
         var ev = AgentEvent(agent: agent, sessionId: sid, kind: kind, source: .hook,
                             time: parseDate(obj["_ts"]) ?? Date())
         ev.detail = detail
+        if let tool = obj["tool_name"] as? String, ["PreToolUse", "PermissionRequest"].contains(name) {
+            ev.toolName = tool
+            ev.ask = Summary.toolAsk(tool, obj["tool_input"])
+            ev.toolFiles = WorkTask.changedFiles(tool, obj["tool_input"])
+        }
+        if name == "Notification", kind == .permission, let m = obj["message"] as? String { ev.ask = Summary.firstSentence(m) }
+        ev.toolUseId = obj["tool_use_id"] as? String
+        if name == "UserPromptSubmit", let p = obj["prompt"] as? String { ev.prompt = speechClip(p, 300) }
         ev.question = question
         if let m = obj["last_assistant_message"] as? String, !m.isEmpty { ev.message = speechClip(m) }
         ev.cwd = obj["cwd"] as? String
@@ -141,7 +149,7 @@ public final class ClaudeTranscriptParser {
             if (o["isMeta"] as? Bool) == true { return [] }
             if let text = msg["content"] as? String {
                 if text.hasPrefix("<") { return [] }   // slash-command wrappers, local output
-                var e = ev(.prompt); e.detail = clip(text); return [e]
+                var e = ev(.prompt); e.detail = clip(text); e.prompt = speechClip(text, 300); return [e]
             }
             var out: [AgentEvent] = []
             for part in msg["content"] as? [[String: Any]] ?? [] {
@@ -150,7 +158,7 @@ public final class ClaudeTranscriptParser {
                     var e = ev((part["is_error"] as? Bool) == true ? .toolFailed : .toolEnd)
                     e.detail = nil; out.append(e)
                 case "text":
-                    if let t = part["text"] as? String, !t.hasPrefix("<") { var e = ev(.prompt); e.detail = clip(t); out.append(e) }
+                    if let t = part["text"] as? String, !t.hasPrefix("<") { var e = ev(.prompt); e.detail = clip(t); e.prompt = speechClip(t, 300); out.append(e) }
                 default: break
                 }
             }
@@ -179,7 +187,10 @@ public final class ClaudeTranscriptParser {
                 if part["type"] as? String == "tool_use" {
                     let asks = part["name"] as? String == "AskUserQuestion"
                     var e = ev(asks ? .question : .toolStart); e.model = model
-                    e.detail = toolLabel(part["name"] as? String ?? "tool", part["input"])
+                    let name = part["name"] as? String ?? "tool"
+                    e.detail = toolLabel(name, part["input"])
+                    e.toolName = name; e.ask = Summary.toolAsk(name, part["input"])
+                    e.toolFiles = WorkTask.changedFiles(name, part["input"]); e.toolUseId = part["id"] as? String
                     if asks { e.question = askQuestion(part["input"]) }
                     out.append(e)
                 } else if part["type"] as? String == "text", let t = part["text"] as? String,
@@ -241,6 +252,10 @@ public final class CodexRolloutParser {
                     input = String(s[r.upperBound...].prefix(80)).replacingOccurrences(of: "\\\"", with: "\"")
                 }
                 e.detail = name == "wait" ? nil : toolLabel(name, input)
+                if name != "wait" {
+                    e.toolName = name; e.ask = Summary.toolAsk(name, input)
+                    e.toolFiles = WorkTask.changedFiles(name, input); e.toolUseId = p["call_id"] as? String
+                }
                 return [e]
             case "custom_tool_call_output", "function_call_output":
                 return [ev(.toolEnd)]
@@ -254,12 +269,19 @@ public final class CodexRolloutParser {
             switch p["type"] as? String {
             case "task_started":
                 var e = ev(.prompt); e.contextWindow = (p["model_context_window"] as? Int); return [e]
+            case "user_message":
+                guard let m = p["message"] as? String, !m.isEmpty else { return [] }
+                var e = ev(.meta); e.prompt = speechClip(m, 300); return [e]
             case "task_complete": return [ev(.turnEnd)]
             case "turn_aborted": var e = ev(.turnEnd); e.detail = p["reason"] as? String; return [e]
             case "error", "stream_error":
                 var e = ev(.error); e.detail = clip((p["message"] as? String) ?? "error"); return [e]
             case "exec_approval_request", "apply_patch_approval_request", "request_permissions":
-                var e = ev(.permission); e.detail = clip((p["command"] as? [String])?.joined(separator: " ") ?? "approval"); return [e]
+                var e = ev(.permission); e.detail = clip((p["command"] as? [String])?.joined(separator: " ") ?? "approval")
+                if let why = p["reason"] as? String, !why.isEmpty { e.ask = Summary.firstSentence(why) }
+                else if let c = (p["command"] as? [String])?.joined(separator: " ") { e.ask = Summary.toolAsk("exec_command", ["cmd": c]) }
+                else { e.ask = "I want to make a change that needs your OK." }
+                return [e]
             case "token_count":
                 var e = ev(.usage)
                 if let info = p["info"] as? [String: Any] {

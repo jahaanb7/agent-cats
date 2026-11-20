@@ -38,6 +38,7 @@ public final class Monitor {
                     self.ingestHook(obj)
                     if self.acceptsApprovals && ApprovalProtocol.supports(obj) {
                         self.approvals.add(obj, reply: reply)
+                        if let sid = obj["session_id"] as? String { self.syncApproval(sid) }
                         self.onChange?()
                     } else { reply.complete([:]) }
                 }
@@ -67,8 +68,20 @@ public final class Monitor {
 
     func ingestHook(_ obj: [String: Any]) {
         guard let e = HookParser.parse(obj) else { return }
-        if [.toolStart, .toolEnd, .toolFailed, .turnEnd, .sessionEnd, .prompt].contains(e.kind) {
+        // Only events that prove a waiting request was settled elsewhere release it. Other tool
+        // calls in the same session (parallel calls, subagents share the session id) must not:
+        // that used to drop the request and leave you answering in the terminal.
+        var released = false
+        switch e.kind {
+        case .turnEnd, .sessionEnd, .prompt:
+            released = approvals.requests.contains { $0.sessionID == e.sessionId }
             approvals.cancel(session: e.sessionId)
+        case .toolEnd, .toolFailed:
+            if let key = ApprovalStore.key(tool: obj["tool_name"] as? String, input: obj["tool_input"]),
+               approvals.requests.contains(where: { $0.sessionID == e.sessionId && $0.key == key }) {
+                approvals.cancel(session: e.sessionId, key: key); released = true
+            }
+        default: break
         }
         hookEventsReceived += 1
         if let pid = e.pid, let ph = placeholderFor[pid], ph != e.sessionId {
@@ -76,10 +89,26 @@ public final class Monitor {
         } else {
             store.apply(e)
         }
+        if released { syncApproval(e.sessionId) }
         if let pid = e.pid { watchExit(pid: pid, session: e.sessionId) }
         if e.agent == .claude, let tp = e.transcriptPath { store.setLaunchKey(e.sessionId, Self.claudeKey(transcript: tp)) }
         if let tp = e.transcriptPath, tails[tp] == nil { follow(path: tp, replay: true) }
         onChange?()
+    }
+
+    /// Copies the session's waiting approvals (if any) onto its cat.
+    func syncApproval(_ session: String, answered: ApprovalProtocol.Decision? = nil) {
+        let next = approvals.first(session: session)
+        store.setApproval(session, waiting: next.map { ($0.ask, $0.detail, $0.id) }, answered: answered)
+    }
+
+    /// Answers a waiting request and updates its cat. Returns whether the hook was still waiting.
+    @discardableResult func resolveApproval(_ id: String, decision: ApprovalProtocol.Decision, message: String? = nil) -> Bool {
+        let session = approvals.requests.first { $0.id == id }?.sessionID
+        let accepted = approvals.resolve(id, decision: decision, message: message)
+        if let session { syncApproval(session, answered: accepted ? decision : nil) }
+        onChange?()
+        return accepted
     }
 
     private func drainSpool() {
@@ -227,6 +256,7 @@ public final class Monitor {
                 self.store.apply(AgentEvent(agent: s.agent, sessionId: s.id, kind: .processExit, source: .process))
             }
             self.approvals.cancel(session: session)
+            self.syncApproval(session)
             self.placeholderFor[pid] = nil
             self.onChange?()
         }
@@ -235,7 +265,12 @@ public final class Monitor {
     }
 
     private func tick() {
+        let before = Set(approvals.requests.map(\.sessionID))
         let approvalsChanged = approvals.sweep()
+        if approvalsChanged {
+            // Timed out or the hook went away (answered in the terminal): the cat stops holding it.
+            for sid in before { syncApproval(sid) }
+        }
         let changed = store.tick { s in
             if let pid = s.pid { return ProcInfo.isAlive(pid) }
             return nil   // log-only session: unknown liveness, expires when quiet

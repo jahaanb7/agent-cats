@@ -40,6 +40,8 @@ public struct Speech: Equatable, Sendable {
     public var placeholder: String
     /// Identifies the moment being answered; a reply is only delivered while it still matches.
     public var token: String
+    /// Small print under the sentence: the exact command or file, so you can check before allowing.
+    public var detail: String? = nil
 
     public var needsAnswer: Bool { mood == .permission || mood == .question }
 
@@ -76,21 +78,25 @@ public struct Speech: Equatable, Sendable {
         case .permission:
             let what = s.activity ?? "use a tool"
             let risky = looksDestructive(what)
+            // Say what it wants in a sentence; the raw command goes in small print underneath.
+            let ask = s.ask ?? s.activity.map(Summary.askFromLabel) ?? "I need your OK to continue."
+            let detail = s.activity.flatMap { $0 == ask ? nil : $0 }
+            let headline = risky ? "Careful! Is this OK?" : "Can I do this?"
             if hookPending {
-                return Speech(mood: .permission, headline: risky ? "Careful! Run this?" : "Can I run this?", text: what,
+                return Speech(mood: .permission, headline: headline, text: ask,
                               choices: [.init(label: "Allow", reply: .hook(allow: true), primary: !risky),
                                         .init(label: "Deny", reply: .hook(allow: false), primary: risky),
                                         .init(label: "In terminal", reply: .handoff)],
-                              textReply: .hookDeny, placeholder: "Or say what to do instead…", token: token)
+                              textReply: .hookDeny, placeholder: "Or say what to do instead…", token: token, detail: detail)
             }
             // Claude Code: "1" = Yes, Esc = No. Codex: "y" / "n".
             let yes: [KeyStep] = claude ? [.text("1")] : [.text("y")]
             let no: [KeyStep] = claude ? [.escape] : [.text("n")]
-            return Speech(mood: .permission, headline: risky ? "Careful! Run this?" : "Can I run this?", text: what,
+            return Speech(mood: .permission, headline: headline, text: ask,
                           choices: [.init(label: "Allow", reply: .keys(yes), primary: !risky),
                                     .init(label: "Deny", reply: .keys(no), primary: risky)],
                           textReply: claude ? .keys(prefix: [.escape, .pause]) : nil,
-                          placeholder: "Or say what to do instead…", token: token)
+                          placeholder: "Or say what to do instead…", token: token, detail: detail)
 
         case .question:
             // Digits pick options 1–9 only, and an empty or longer list has no safe digit mapping.
@@ -111,15 +117,17 @@ public struct Speech: Equatable, Sendable {
                               textReply: .keys(prefix: [.text("\(q.options.count + 1)"), .pause]),
                               placeholder: "Type your own answer…", token: token)
             }
-            let text = s.lastMessage ?? "I'm waiting for you."
+            let text = s.lastMessage.map { Summary.ask($0) } ?? "I'm waiting for you."
             return Speech(mood: .question, headline: "Your turn", text: text,
                           choices: yesNo(text), textReply: .keys(prefix: []),
                           placeholder: "Reply…", token: token)
 
         case .done:
-            let text = s.lastMessage ?? s.activity.map { "Finished \($0)" } ?? "All done!"
             // Ending on a question means it's waiting on you: keep the bubble up until answered.
             let asks = s.asksForReply
+            // One sentence: the question it ends on, or the gist of what it finished.
+            let text = s.lastMessage.map { asks ? Summary.ask($0) : Summary.firstSentence($0) }
+                ?? s.activity.map { "Finished \($0)" } ?? "All done!"
             return Speech(mood: asks ? .question : .done, headline: asks ? "Question for you" : "All done!", text: text,
                           choices: yesNo(text), textReply: .keys(prefix: []),
                           placeholder: "Reply to keep going…", token: token)
@@ -130,17 +138,28 @@ public struct Speech: Equatable, Sendable {
                           textReply: nil, placeholder: "", token: token)
 
         case .working, .thinking:
+            let doing = s.state == .working ? s.ask.map(Speech.ongoing) : nil
             return Speech(mood: .status, headline: s.state == .working ? "Working…" : "Thinking…",
-                          text: s.activity ?? "On it.", choices: [], textReply: nil, placeholder: "", token: token)
+                          text: doing ?? s.activity ?? "On it.", choices: [], textReply: nil, placeholder: "", token: token,
+                          detail: doing == nil ? nil : s.activity)
 
         case .idle:
-            return Speech(mood: .status, headline: "Napping", text: s.lastMessage ?? "Nothing to do right now.",
+            return Speech(mood: .status, headline: "Napping", text: s.lastMessage.map { Summary.firstSentence($0) } ?? "Nothing to do right now.",
                           choices: [], textReply: .keys(prefix: []), placeholder: "Give me a task…", token: token)
 
         case .gone:
             return Speech(mood: .status, headline: "Gone home", text: "This session has ended.",
                           choices: [], textReply: nil, placeholder: "", token: token)
         }
+    }
+
+    /// "I want to run the tests." → "I’m going to run the tests." — the same sentence, underway.
+    static func ongoing(_ ask: String) -> String {
+        for p in ["I want to ", "I want "] where ask.hasPrefix(p) {
+            let rest = ask.dropFirst(p.count)
+            return "I\u{2019}m going to " + rest
+        }
+        return ask
     }
 
     /// Offer one-tap Yes/No when the agent ended on a question.

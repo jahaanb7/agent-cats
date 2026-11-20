@@ -22,7 +22,8 @@ enum TerminalTyper {
     }
 
     private static var busy = false   // main thread only
-    private static let queue = DispatchQueue(label: "agentcats.typer")
+    private static var clearedStaleGrant = false   // main thread only
+    private static var queue: DispatchQueue { TerminalJump.scriptQueue }   // one AppleScript thread
 
     /// - stillValid: must be called on main. False once the agent has moved on.
     /// - willFocusTerminal: called on main just before Terminal is brought forward.
@@ -35,7 +36,11 @@ enum TerminalTyper {
         }
         guard stillValid() else { done(.failed("The agent already moved on, so I didn't send that.")); return }
         busy = true
-        func finish(_ o: Outcome) { busy = false; done(o) }
+        func finish(_ o: Outcome) {
+            busy = false
+            StartupLog.write("Reply to \(s.id.prefix(8)) -> \(o)")
+            done(o)
+        }
 
         if TerminalJump.isRunning(TerminalJump.iTermID) {
             queue.async {
@@ -50,16 +55,19 @@ enum TerminalTyper {
             done(.failed("I can only type into Terminal or iTerm. Double-click me to answer in \(app).")); return
         }
         guard AXIsProcessTrusted() else {
-            busy = false
-            let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-            _ = AXIsProcessTrustedWithOptions(opts)
-            done(.needsAccessibility); return
+            requestAccessibility()
+            finish(.needsAccessibility); return
         }
         let previous = NSWorkspace.shared.frontmostApplication
         let wasInTerminal = previous?.bundleIdentifier == TerminalJump.terminalID
         queue.async {
             let previousTab = wasInTerminal ? TerminalJump.terminalFrontTTY() : nil
-            DispatchQueue.main.sync { willFocusTerminal() }
+            DispatchQueue.main.sync {
+                willFocusTerminal()
+                // macOS 14+ only lets Terminal come forward if we hand activation over first.
+                if #available(macOS 14.0, *) { NSApp.yieldActivation(toApplicationWithBundleIdentifier: TerminalJump.terminalID) }
+                NSApp.deactivate()
+            }
             let outcome = terminalSend(steps, tty: tty, stillValid: stillValid)
             DispatchQueue.main.async {
                 // Put the user back: their own Terminal tab, or the app they were in.
@@ -107,10 +115,23 @@ enum TerminalTyper {
         guard TerminalJump.terminalTab(tty: tty) else {
             return .failed("That terminal tab is gone. Double-click me to look for it.")
         }
-        Thread.sleep(forTimeInterval: 0.35)   // let Terminal come forward before the first key
-        // Full check before the first key: the moment is current and the right tab is in front.
-        let ready = DispatchQueue.main.sync { stillValid() && !NSApp.isActive }
-        guard ready, TerminalJump.terminalFrontTabIs(tty: tty) else { return stopped() }
+        // Wait (up to ~2s) for Terminal to really be in front with the right tab, nudging it once.
+        var inFront = false
+        for attempt in 0..<20 {
+            Thread.sleep(forTimeInterval: 0.1)
+            let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == TerminalJump.terminalID
+            if frontmost, !DispatchQueue.main.sync(execute: { NSApp.isActive }), TerminalJump.terminalFrontTabIs(tty: tty) {
+                inFront = true; break
+            }
+            if attempt == 6 {
+                DispatchQueue.main.sync {
+                    NSRunningApplication.runningApplications(withBundleIdentifier: TerminalJump.terminalID).first?.activate()
+                }
+            }
+        }
+        guard inFront else { return .failed("Terminal didn't come to the front, so I didn't type anything. Try again.") }
+        // Full check before the first key: the moment is still current.
+        guard DispatchQueue.main.sync(execute: stillValid) else { return stopped() }
         for step in steps {
             if step == .pause { Thread.sleep(forTimeInterval: 0.3); continue }
             // Later keys: only focus matters now, so a sequence can't be cut in half by a new event.
@@ -120,6 +141,21 @@ enum TerminalTyper {
             Thread.sleep(forTimeInterval: 0.08)
         }
         return .sent
+    }
+
+    /// Asks for Accessibility. A grant made for an older build of the app no longer matches it, yet still
+    /// shows as switched on in System Settings; clear that stale entry once so the fresh prompt can stick.
+    private static func requestAccessibility() {
+        if !clearedStaleGrant, let id = Bundle.main.bundleIdentifier {
+            clearedStaleGrant = true
+            let reset = Process()
+            reset.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+            reset.arguments = ["reset", "Accessibility", id]
+            try? reset.run(); reset.waitUntilExit()
+            StartupLog.write("Accessibility not granted; cleared any stale entry for \(id)")
+        }
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(opts)
     }
 
     private static func stopped() -> Outcome {

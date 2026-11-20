@@ -24,7 +24,15 @@ public struct TreeLayout: Equatable {
     // Geometry in art pixels.
     public static let slotW = 30.0, postW = 10.0, basketW = 26.0, pad = 4.0
     public static let treeH = 44.0, emptyH = 30.0
-    public static let scales: [Double] = [1.5, 1.0, 0.5]
+    public static let scales: [Double] = [3.0, 2.5, 2.0, 1.5, 1.0, 0.5]
+
+    /// A lone cat is shown big; the room zooms out as more cats arrive.
+    static func zoom(for n: Int) -> Double {
+        switch n {
+        case 1: return 4.0 / 3.0   // 2pt at the default size
+        default: return 1.0
+        }
+    }
 
     /// - Parameters:
     ///   - ordered: sessions in display order (attention first), e.g. `SessionStore.ordered`.
@@ -32,7 +40,8 @@ public struct TreeLayout: Equatable {
     ///   - preferredScale: user's size setting; the layout only ever shrinks from it.
     public static func compute(ordered: [Session], maxWidth: Double, preferredScale: Double = 1.5) -> TreeLayout {
         let n = ordered.count
-        let scales = Self.scales.filter { $0 <= preferredScale + 0.001 }
+        let cap = preferredScale * zoom(for: n)
+        let scales = Self.scales.filter { $0 <= cap + 0.001 }
         let largest = scales.first ?? 1.5
         if n == 0 {
             // Just the post and an empty cushion, so you can still find and click the app.

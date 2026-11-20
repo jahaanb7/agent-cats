@@ -21,6 +21,14 @@ let sessions = [
         $0.rateLimits = [RateLimit(name: "5h", usedPercent: 38, resetsAt: nil), RateLimit(name: "weekly", usedPercent: 71, resetsAt: nil)]
         $0.recent = ["20:41:02 prompt “make the dashboard better”", "20:41:09 toolStart Read Dashboard.swift", "20:41:10 toolEnd",
                      "20:41:31 toolStart Edit Dashboard.swift", "20:41:33 toolEnd", "20:41:40 permission Bash npm run build"]
+        $0.ask = "I want to build the web app."
+        var earlier = WorkTask(prompt: "fix the bubble so it stops flickering", startedAt: now.addingTimeInterval(-1800))
+        earlier.files = ["BubbleController.swift"]; earlier.commands = 3; earlier.endedAt = now.addingTimeInterval(-1500)
+        earlier.reply = "Fixed the flicker: the bubble now waits for the room to finish dropping in. Tests pass."
+        var task = WorkTask(prompt: "make the dashboard better", startedAt: now.addingTimeInterval(-120))
+        task.files = ["Dashboard.swift", "Models.swift"]; task.commands = 2; task.reads = 4
+        task.steps = ["run the tests", "build the web app"]
+        $0.tasks = [earlier, task]
     },
     session("b", .working, "reel-claude") { $0.activity = "Bash swift test"; $0.entrypoint = "sdk-cli"; $0.tty = nil },
     session("c", .done, "scamtest") { $0.lastMessage = "All green. Want me to open a PR?"; $0.entrypoint = "remote" },
@@ -33,9 +41,10 @@ model.reduceMotion = true
 model.hooksReady = CommandLine.arguments.contains("--no-hooks") ? false : true
 model.entries = zip(sessions, ["Miso", "Mochi", "Pepper", "Sumi", "Oreo"]).map { CatTreeView.Entry(session: $0.0, cat: $0.1) }
 if !CommandLine.arguments.contains("--empty") {
-    model.approvals = [PendingApproval(sessionID: "a", tool: "Bash", input: "{\n  \"command\": \"npm run build\",\n  \"description\": \"Build the web app\"\n}", reply: HookReply())]
+    model.approvals = [PendingApproval(sessionID: "a", tool: "Bash", input: "{\n  \"command\": \"npm run build\",\n  \"description\": \"Build the web app\"\n}", reply: HookReply(),
+                                       ask: "I want to build the web app.", detail: "Bash npm run build")]
 } else { model.entries = [] }
-let size = NSSize(width: 880, height: 640)
+let size = NSSize(width: 880, height: 900)
 let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .fullSizeContentView], backing: .buffered, defer: false)
 window.titlebarAppearsTransparent = true
 window.appearance = NSAppearance(named: .aqua)

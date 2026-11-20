@@ -9,6 +9,7 @@ enum SelfTest {
 
     static func run() -> Bool {
         hooks(); claudeLog(); codexLog(); timing(); layout(); keys(); installer(); approvals(); visibility(); speech()
+        summaries(); approvalHolding(); workHistory()
         print("\(passes) passed, \(failures) failed")
         return failures == 0
     }
@@ -128,7 +129,9 @@ enum SelfTest {
         let one = TreeLayout.compute(ordered: sessions(1), maxWidth: 680)
         let three = TreeLayout.compute(ordered: sessions(3), maxWidth: 680)
         let six = TreeLayout.compute(ordered: sessions(6), maxWidth: 680)
-        check(one.scale == 1.5 && one.width < three.width && three.width < six.width, "tree grows with each session")
+        check(one.scale == 2.0 && three.scale == 1.5 && six.scale == 1.5, "a lone cat is shown bigger (got \(one.scale), \(three.scale))")
+        check(one.width < three.width && three.width < six.width, "tree grows with each session")
+        check(TreeLayout.compute(ordered: sessions(1), maxWidth: 680, preferredScale: 1.0).scale == 1.0, "small setting zooms a lone cat less")
         check(six.scale == 1.5 && six.slots.count == 6 && six.width <= 680, "6 cats fit at full size")
         let many = TreeLayout.compute(ordered: sessions(30), maxWidth: 680)
         check(many.scale == 1.0 && many.width <= 680 && many.basket.isEmpty == false, "many cats: shrink to 1pt, overflow to basket (scale \(many.scale), basket \(many.basket.count))")
@@ -328,7 +331,7 @@ enum SelfTest {
         store.apply(hook("Stop")!)
         s = store.sessions["S1"]!
         sp = Speech.make(s, hookPending: false)
-        check(sp.mood == .question && sp.needsAnswer && sp.text == "Tests pass. Want me to open a PR?", "a turn ending on a question asks you (got \(sp.mood), \(sp.text))")
+        check(sp.mood == .question && sp.needsAnswer && sp.text == "Want me to open a PR?", "a turn ending on a question asks you just the question (got \(sp.mood), \(sp.text))")
         check(sp.choices.map(\.label) == ["Yes", "No"], "yes/no offered for a trailing question")
         check(s.wantsYou && !s.state.needsAttention, "trailing question wants you without changing state")
         store.tick(now: s.stateSince.addingTimeInterval(300)) { _ in true }
@@ -358,5 +361,77 @@ enum SelfTest {
         let cp = CodexRolloutParser()
         let ce = cp.parse(line: #"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done."}]}}"#, fallbackSession: "C9")
         check(ce.first?.message == "Done.", "codex assistant message")
+    }
+
+    static func summaries() {
+        check(Summary.toolAsk("Bash", ["command": "npm test", "description": "Run the test suite"]) == "I want to run the test suite.", "bash uses Claude's own description")
+        check(Summary.toolAsk("Bash", ["command": "git push origin main"]) == "I want to run git push.", "bash without description gets a gist (got \(Summary.toolAsk("Bash", ["command": "git push origin main"])))")
+        check(Summary.toolAsk("Bash", ["command": "rm -rf build"]) == "I want to delete build.", "rm gist")
+        check(Summary.toolAsk("Edit", ["file_path": "/a/b/Models.swift"]) == "I want to edit Models.swift.", "edit summary")
+        check(Summary.toolAsk("WebFetch", ["url": "https://docs.example.com/x"]) == "I want to open a page on docs.example.com.", "fetch summary")
+        check(Summary.toolAsk("mcp__github__create_issue", [:]).contains("create issue"), "mcp summary")
+        let reply = "## Summary\n\nDone.\n\nI fixed the flaky login test by waiting for the token. Also bumped the timeout.\n\n- `Auth.swift`: retry\n\nWant me to open a PR?"
+        check(Summary.firstSentence(reply) == "I fixed the flaky login test by waiting for the token.", "first useful sentence, markdown stripped (got \(Summary.firstSentence(reply)))")
+        check(Summary.ask(reply) == "Want me to open a PR?", "ask picks the question")
+        check(Summary.askFromLabel("Bash rm -rf build && make") == "I want to delete build.", "label fallback (got \(Summary.askFromLabel("Bash rm -rf build && make")))")
+        check(Summary.askFromLabel("Edit Models.swift") == "I want to edit Models.swift.", "label fallback for edits")
+        check(Summary.firstSentence("Updated v1.2 in file.swift today. Next.") == "Updated v1.2 in file.swift today.", "dots inside words don't split")
+    }
+
+    /// The bug: a parallel tool call or a subagent's tool events in the same session used to cancel a
+    /// waiting approval and knock the cat out of "asking", so Allow went nowhere.
+    static func approvalHolding() {
+        let m = Monitor()
+        m.acceptsApprovals = true
+        let req: [String: Any] = ["_agent": "claude", "hook_event_name": "PermissionRequest", "_waitForDecision": true,
+                                  "session_id": "P1", "cwd": "/tmp/p", "tool_name": "Bash",
+                                  "tool_input": ["command": "make deploy", "description": "Deploy the site"]]
+        m.queue.sync {
+            m.ingestHook(req)
+            let reply = HookReply()
+            m.approvals.add(req, reply: reply)
+            m.syncApproval("P1")
+            var s = m.store.sessions["P1"]!
+            check(s.state == .permission && s.awaitingApproval && s.ask == "I want to deploy the site.", "approval sets ask (got \(s.ask ?? "nil"))")
+            let token = Speech.token(s)
+            // A parallel Read runs and finishes while we wait.
+            m.ingestHook(["_agent": "claude", "hook_event_name": "PreToolUse", "session_id": "P1", "tool_name": "Read", "tool_input": ["file_path": "/tmp/p/a"]])
+            m.ingestHook(["_agent": "claude", "hook_event_name": "PostToolUse", "session_id": "P1", "tool_name": "Read", "tool_input": ["file_path": "/tmp/p/a"]])
+            s = m.store.sessions["P1"]!
+            check(reply.pending && m.approvals.requests.count == 1, "other tool calls don't cancel the waiting approval")
+            check(s.state == .permission && Speech.token(s) == token, "cat keeps asking through parallel tool traffic")
+            check(Speech.make(s, hookPending: true).text == "I want to deploy the site.", "bubble says the summary")
+            let id = m.approvals.requests[0].id
+            check(m.resolveApproval(id, decision: .allow), "allow reaches the waiting hook")
+            s = m.store.sessions["P1"]!
+            check(s.state == .working && !s.awaitingApproval, "allowed request moves on")
+            let out = reply.response()?["hookSpecificOutput"] as? [String: Any]
+            check((out?["decision"] as? [String: Any])?["behavior"] as? String == "allow", "hook got allow")
+
+            // Answered in the terminal: the same tool finishing releases it.
+            let r2 = HookReply()
+            m.ingestHook(req); m.approvals.add(req, reply: r2); m.syncApproval("P1")
+            m.ingestHook(["_agent": "claude", "hook_event_name": "PostToolUse", "session_id": "P1", "tool_name": "Bash",
+                          "tool_input": ["command": "make deploy", "description": "Deploy the site"]])
+            check(!r2.pending && m.approvals.requests.isEmpty && !m.store.sessions["P1"]!.awaitingApproval, "matching tool end releases the request")
+        }
+    }
+
+    static func workHistory() {
+        let store = SessionStore()
+        store.apply(hook("UserPromptSubmit", ["prompt": "fix the login bug"])!)
+        store.apply(hook("PreToolUse", ["tool_name": "Edit", "tool_use_id": "t1", "tool_input": ["file_path": "/x/Auth.swift"]])!)
+        store.apply(hook("PreToolUse", ["tool_name": "Bash", "tool_use_id": "t2", "tool_input": ["command": "swift test", "description": "Run the tests"]])!)
+        // The transcript sees the same calls; they count once.
+        let p = ClaudeTranscriptParser()
+        for e in p.parse(line: #"{"type":"assistant","sessionId":"S1","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"/x/Auth.swift"}},{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"swift test"}}]}}"#, fallbackSession: "S1") { store.apply(e) }
+        store.apply(hook("Stop", ["last_assistant_message": "Fixed the login bug by refreshing the token first. All tests pass."])!)
+        let t = store.sessions["S1"]!.tasks
+        check(t.count == 1 && t[0].prompt == "fix the login bug", "task recorded with prompt")
+        check(t[0].files == ["Auth.swift"] && t[0].commands == 1 && t[0].steps == ["run the tests"], "work counted once (got \(t[0].files) \(t[0].commands) \(t[0].steps))")
+        check(t[0].outcome == "Fixed the login bug by refreshing the token first. All tests pass.", "outcome summary (got \(t[0].outcome ?? "nil"))")
+        check(t[0].endedAt != nil && t[0].tally == "changed 1 file · ran 1 command", "tally (got \(t[0].tally))")
+        store.apply(hook("UserPromptSubmit", ["prompt": "now add a test"])!)
+        check(store.sessions["S1"]!.tasks.count == 2, "next prompt starts a new task")
     }
 }

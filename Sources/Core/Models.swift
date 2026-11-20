@@ -94,6 +94,11 @@ public struct AgentEvent: Sendable {
     /// How the agent was started: Claude's "cli" / "sdk-cli", Codex's originator, or "remote".
     public var entrypoint: String?
     public var detail: String?          // tool name + short input, prompt excerpt, error text
+    public var ask: String?             // one plain sentence: what this tool call is for
+    public var toolName: String?
+    public var toolFiles: [String] = [] // files a tool call changes
+    public var toolUseId: String?       // dedupes the same call seen by both hook and transcript
+    public var prompt: String?          // the user's request, longer than `detail`
     public var question: AgentQuestion? // full question + options (AskUserQuestion)
     public var message: String?         // the agent's latest reply text, for the speech bubble
     public var model: String?
@@ -132,6 +137,12 @@ public struct Session: Sendable {
     public var stateSince: Date
     public var state: CatState = .idle
     public var activity: String?        // what it is doing right now
+    public var ask: String?             // one sentence: what it is asking permission for
+    /// A hook approval is waiting in Agent Cats; the cat stays in "permission" until it is answered.
+    public var awaitingApproval = false
+    var approvalKey: String?
+    public var tasks: [WorkTask] = []   // recent requests and what came of them, newest last
+    var seenToolUses: [String] = []     // bounded, to count each tool call once
     public var question: AgentQuestion? // set while an AskUserQuestion prompt is open
     public var lastMessage: String?     // the agent's latest reply text (cleared by a new prompt)
     public var usage = TokenUsage()

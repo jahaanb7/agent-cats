@@ -14,14 +14,26 @@ final class BubblePanel: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        // Full-screen apps live in their own Space: without .fullScreenAuxiliary the bubble (and its
+        // Allow button) is silently kept off screen there.
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         hidesOnDeactivate = false
         becomesKeyOnlyIfNeeded = true
         isReleasedWhenClosed = false
+        // The bubble is SwiftUI in a fully transparent window, so the window server sees no pixels
+        // and lets clicks fall through to the app behind: Allow did nothing. Setting this
+        // explicitly makes the whole window take the mouse.
+        ignoresMouseEvents = false
     }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     override func cancelOperation(_ sender: Any?) { onEscape?() }
+}
+
+/// The bubble pops up without taking focus, so its first click must count: otherwise AppKit spends
+/// that click on focusing the panel and Allow silently does nothing.
+final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 final class BubbleAnim: ObservableObject {
@@ -59,6 +71,7 @@ final class BubbleModel: ObservableObject {
     var onAddFiles: (([URL]) -> Void)?
     var onClose: (() -> Void)?
     var onOpenTerminal: (() -> Void)?
+    var onEndSession: (() -> Void)?
 }
 
 /// Speech-bubble outline with a small tail pointing at the cat.
@@ -162,6 +175,11 @@ struct BubbleView: View {
                             .foregroundStyle(.white).background(Capsule().fill(Palette.orange))
                     }.buttonStyle(.plain).help("Another cat needs you. Click to hear it.")
                 }
+                if speech.headline != "Gone home" {
+                    Button { model.onEndSession?() } label: {
+                        Image(systemName: "power").font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.soft)
+                    }.buttonStyle(.plain).help("End this session (asks first)").accessibilityLabel("End session")
+                }
                 Button { model.onClose?() } label: {
                     Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Palette.soft)
                 }.buttonStyle(.plain).help("Close (Esc)").accessibilityLabel("Close bubble")
@@ -177,6 +195,15 @@ struct BubbleView: View {
             .lineLimit(9)
             .textSelection(.enabled)
             .onTapGesture { anim.shown = speech.text.count }
+
+            if let detail = speech.detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Palette.soft)
+                    .lineLimit(2).truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help(detail)
+            }
 
             if model.status != .sent, !speech.choices.isEmpty {
                 FlowButtons(choices: speech.choices, disabled: model.status == .sending) { model.onChoice?($0) }
@@ -303,11 +330,12 @@ struct BubbleView: View {
             }
             let gen = model.generation
             // Roughly 60 characters a second, capped at about a second and a half overall.
-            let step = max(1, fullCount / 90)
+            // 30 updates a second is smooth for text and half the layout work of 60.
+            let step = max(2, fullCount / 45)
             func tick() {
                 guard gen == model.generation, anim.shown < fullCount else { return }
                 anim.shown = min(fullCount, anim.shown + step)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.016, execute: tick)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.033, execute: tick)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: tick)
         }

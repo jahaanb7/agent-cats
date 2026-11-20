@@ -48,14 +48,22 @@ public final class SessionStore {
 
         // With hooks installed, log lines only add metadata; hooks drive state (they are earlier and exact).
         let drivesState = e.source != .log || !s.hookSeen || e.kind == .error
+        recordWork(e, drivesState: drivesState, in: &s)
+        // While Agent Cats holds a permission request, other tool traffic in the same session (parallel
+        // tool calls, subagents) must not knock the cat out of "asking": that would drop your Allow.
+        let pinned = s.awaitingApproval && s.state == .permission &&
+            [.toolStart, .toolEnd, .toolFailed, .question, .permission].contains(e.kind)
         var next = s.state
-        if drivesState {
+        if drivesState && !pinned {
             switch e.kind {
             case .sessionStart: if s.state == .gone || isNew { next = .idle }
             case .prompt: next = .thinking; s.question = nil; s.lastMessage = nil; s.activity = e.detail.map { "\u{201C}\($0)\u{201D}" } ?? s.activity
-            case .toolStart: next = .working; s.question = nil; if let d = e.detail { s.activity = d }
+            case .toolStart: next = .working; s.question = nil; if let d = e.detail { s.activity = d }; if let a = e.ask { s.ask = a }
             case .toolEnd, .toolFailed: s.question = nil; if s.state == .working || s.state == .permission || s.state == .question { next = .thinking }
-            case .permission: next = .permission; s.question = nil; if let d = e.detail { s.activity = d }
+            case .permission:
+                next = .permission; s.question = nil; if let d = e.detail { s.activity = d }
+                // A tool-based request knows exactly what it wants; a bare notification only says "permission".
+                if e.toolName != nil || s.ask == nil || s.state != .working { s.ask = e.ask ?? s.ask }
             case .question:
                 // A bare "waiting for input" notification keeps an open multiple-choice question.
                 if let q = e.question { s.question = q } else if s.state != .question { s.question = nil }
@@ -67,11 +75,72 @@ public final class SessionStore {
             }
         }
         if next != s.state { s.state = next; s.stateSince = e.time }
+        if s.state != .permission && !s.awaitingApproval { s.ask = s.state == .working ? s.ask : nil }
         if let line = logLine(e) {
             s.recent.append(line); if s.recent.count > 30 { s.recent.removeFirst(s.recent.count - 30) }
         }
         sessions[e.sessionId] = s
         return (old, s.state)
+    }
+
+    /// Keeps a short history of what you asked for and what the agent did about it.
+    private func recordWork(_ e: AgentEvent, drivesState: Bool, in s: inout Session) {
+        func current() -> Int {
+            if s.tasks.isEmpty { s.tasks.append(WorkTask(prompt: "", startedAt: e.time)) }
+            return s.tasks.count - 1
+        }
+        switch e.kind {
+        case .prompt where drivesState:
+            if let i = s.tasks.indices.last, s.tasks[i].endedAt == nil { s.tasks[i].endedAt = e.time }
+            let text = e.prompt ?? e.detail ?? ""
+            // The same request seen twice (hook, then transcript before hooks were known) is one task.
+            if let last = s.tasks.last, !text.isEmpty, last.prompt == text, abs(last.startedAt.timeIntervalSince(e.time)) < 120 { break }
+            s.tasks.append(WorkTask(prompt: text, startedAt: e.time))
+            if s.tasks.count > 8 { s.tasks.removeFirst(s.tasks.count - 8) }
+        case .toolStart:
+            if let id = e.toolUseId {
+                guard !s.seenToolUses.contains(id) else { break }
+                s.seenToolUses.append(id)
+                if s.seenToolUses.count > 400 { s.seenToolUses.removeFirst(100) }
+            } else if !drivesState { break }
+            guard let tool = e.toolName else { break }
+            s.tasks[current()].record(tool: tool, files: e.toolFiles, ask: e.ask)
+        case .toolFailed where drivesState:
+            s.tasks[current()].failures += 1
+        case .turnEnd where drivesState:
+            if let i = s.tasks.indices.last { s.tasks[i].endedAt = e.time }
+        default: break
+        }
+        if let p = e.prompt, e.kind != .prompt, let i = s.tasks.indices.last, s.tasks[i].prompt.isEmpty { s.tasks[i].prompt = p }
+        if let m = e.message, !m.isEmpty, !s.tasks.isEmpty { s.tasks[s.tasks.count - 1].reply = m }
+    }
+
+    /// Mirrors Agent Cats' own waiting approvals onto the session. `ask`/`detail` describe the first
+    /// waiting request; when none is left, `answered` says how the last one went.
+    func setApproval(_ id: String, waiting: (ask: String, detail: String, key: String)?,
+                            answered: ApprovalProtocol.Decision? = nil, now: Date = Date()) {
+        guard var s = sessions[id], s.state != .gone else { return }
+        if let w = waiting {
+            // A new request (or the next of several) is a new moment for the bubble.
+            let changed = s.state != .permission || s.approvalKey != w.key
+            s.awaitingApproval = true
+            s.ask = w.ask; s.activity = w.detail; s.question = nil
+            s.approvalKey = w.key
+            if changed { s.state = .permission; s.stateSince = now }
+        } else if s.awaitingApproval {
+            s.awaitingApproval = false
+            s.approvalKey = nil
+            if s.state == .permission {
+                // Allowed: it runs now. Denied: it thinks again. Handed off or timed out: the
+                // terminal is showing its own prompt, so it is still asking.
+                switch answered {
+                case .allow?: s.state = .working; s.stateSince = now
+                case .deny?: s.state = .thinking; s.stateSince = now
+                default: break
+                }
+            }
+        }
+        sessions[id] = s
     }
 
     private static let hhmm: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f }()
