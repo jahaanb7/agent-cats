@@ -247,6 +247,13 @@ public final class CatRoster {
         return Self.names[start]   // more sessions than cats: share
     }
 
+    /// Lets the user pick which cat a project gets (kept across runs).
+    public func setCat(_ cat: String, for session: Session) {
+        guard Self.names.contains(cat) else { return }
+        byProject[session.cwd.isEmpty ? session.id : session.cwd] = cat
+        save()
+    }
+
     private func save() {
         guard let f = file, let d = try? JSONEncoder().encode(byProject) else { return }
         try? FileManager.default.createDirectory(atPath: (f as NSString).deletingLastPathComponent, withIntermediateDirectories: true)

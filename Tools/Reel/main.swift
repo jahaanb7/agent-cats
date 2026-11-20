@@ -692,8 +692,7 @@ for f in 0..<frameCount {
             .draw(fromCenter: catC, radius: 0, toCenter: catC, radius: 520, options: [])
         let landAt = S(7) + 0.35
         let fall = easeInOut(progress(t, S(7) + 0.05, landAt))
-        let px: CGFloat = 15
-        let cw = CGFloat(LogoArt.w) * px, ch = CGFloat(LogoArt.h) * px
+        let cw: CGFloat = 380, ch: CGFloat = 380
         let baseY = catC.y + ch / 2   // feet
         // Squash on landing, then settle.
         let since = t - landAt
@@ -713,14 +712,13 @@ for f in 0..<frameCount {
         burst(CGPoint(x: W / 2 + 200, y: baseY), age: since, seed: 92, count: 10, speed: 300, size: 12, gravity: 200)
         if fall > 0 {
             let y = (baseY - ch) - CGFloat(1 - fall) * 1100
-            let paw = since > 0.3 ? (sin((since - 0.3) * 9) > 0 ? 1.0 : 0.35) : 1.0
-            let img = LogoArt.image(paw: paw, tail: sin(t * 3), bell: since > 0 ? sin(since * 11) * exp(-since * 0.8) + 0.3 * sin(t * 6) : 0)
+            let img = LogoArt.tile(size: ch)
             withSquash(sx, sy, around: CGPoint(x: W / 2, y: baseY)) {
                 draw(img, NSRect(x: W / 2 - cw / 2, y: y, width: cw, height: ch), crisp: true)
             }
         }
         // The bell glints.
-        let bellAt = CGPoint(x: W / 2 + cw * 0.36, y: baseY - ch * 0.38)
+        let bellAt = CGPoint(x: W / 2 + cw * 0.30, y: baseY - ch * 0.80)
         sparkles(bellAt, age: since - 0.25, spread: 150, seed: 5)
         sparkles(bellAt, age: since - 1.6, spread: 130, seed: 6)
         // The name types itself, terminal style.

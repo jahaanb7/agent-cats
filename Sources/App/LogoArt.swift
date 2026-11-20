@@ -1,133 +1,124 @@
 import AppKit
 
-/// The Agent Cats mark: an orange beckoning cat (maneki-neko) with a red ribbon and a gold bell on
-/// the tip of its curled tail. Built from pixel shapes so the paw and tail can animate.
+/// The Agent Cats mark: a pixel cat that winks with a terminal prompt: ">" is one eye, a "_" cursor the
+/// other, with a "…" speech bubble for "it asks you". Used by the app icon, the headers and the reel.
 enum LogoArt {
-    static let w = 34, h = 34
-
-    // Palette (shared with the reel: night, cream, orange, red, gold).
-    static let colors: [Character: UInt32] = [
-        "O": 0xEB8C54, "H": 0xF7B37E, "D": 0xC4683A, "S": 0xD97A45,   // orange, highlight, shade, stripe
-        "W": 0xF8EBD0, "w": 0xE6D3AE,                                   // cream belly, cream shade
-        "K": 0x231713, "L": 0x2A1712,                                   // ink, outline
-        "R": 0xD9443F, "r": 0xA9302C,                                   // red ribbon
-        "G": 0xF5C451, "g": 0xC8922B, "Y": 0xFFF1B8,                    // gold bell, shade, shine
-        "P": 0xF29AA4,                                                  // pink
+    // O orange · H highlight · D shade · P pink · C cream · K ink. Left half, mirrored; eyes added below.
+    private static let half = [
+        "..OO.....",
+        ".OHOO....",
+        ".OHPOO...",
+        ".OPPPOOOO",
+        "OOPPOHHHH",
+        "OOOOOOOOO",
+        "OOOOOOOOO",
+        "OOOOOOOOO",
+        "OOOOOOOOO",
+        "OOOOOOOOO",
+        "OOOOOOOOO",   // a clear row between the eyes and the muzzle
+        "DOOOOOOCP",
+        "DOOOOOCCC",
+        ".DDOOOOCC",
+        "..DDDOOOO",
+        "....DDDDD",
     ]
-
-    /// - paw: how high the beckoning paw is raised, 0…1.
-    /// - tail: tail sway, -1…1. - bell: bell swing, -1…1.
-    static func grid(paw: Double = 1, tail: Double = 0, bell: Double = 0) -> [[Character]] {
-        var g = [[Character]](repeating: [Character](repeating: ".", count: w), count: h)
-        func put(_ x: Int, _ y: Int, _ c: Character) { if x >= 0, y >= 0, x < w, y < h { g[y][x] = c } }
-        func ellipse(_ cx: Double, _ cy: Double, _ rx: Double, _ ry: Double, _ c: Character, only: Set<Character>? = nil) {
-            for y in 0..<h { for x in 0..<w {
-                let dx = (Double(x) + 0.5 - cx) / rx, dy = (Double(y) + 0.5 - cy) / ry
-                if dx * dx + dy * dy <= 1, only == nil || only!.contains(g[y][x]) { g[y][x] = c }
-            } }
-        }
-        func disc(_ cx: Double, _ cy: Double, _ r: Double, _ c: Character) { ellipse(cx, cy, r, r, c) }
-
-        // Tail: a thick curl up the right side, swaying a little; the bell is tied near its tip.
-        var tip = (x: 0.0, y: 0.0)
-        for k in 0...44 {
-            let u = Double(k) / 44
-            let x = 22.5 + 5.2 * sin(u * .pi * 0.55) + tail * 1.6 * u * u
-            let y = 30.5 - 14.5 * u
-            disc(x, y, 1.75 - 0.35 * u, "O")
-            tip = (x, y)
-        }
-        // Body and belly.
-        ellipse(16.5, 24.5, 8.6, 8.2, "O")
-        ellipse(16.5, 25.6, 5.2, 6.0, "W")
-        // Shoulders join head and body; then the head.
-        ellipse(16.5, 20.0, 9.6, 3.2, "O")
-        ellipse(16.5, 12.6, 9.3, 7.4, "O")
-        // Ears: triangles, narrow at the tip; pink inside.
-        for tipX in [10.5, 22.5] {
-            for r in 0..<5 {
-                let hw = 0.6 + Double(r) * 0.8
-                for x in 0..<w where abs(Double(x) + 0.5 - tipX) <= hw { put(x, 2 + r, "O") }
-                if r >= 2 {
-                    for x in 0..<w where abs(Double(x) + 0.5 - tipX) <= hw - 1.4 { put(x, 2 + r, "P") }
-                }
-            }
-        }
-        // Tabby stripes on the forehead.
-        for x in [14, 16, 18] { put(x, 7, "S"); put(x, 8, "S") }
-        // Muzzle, eyes (with a cream shine), nose, mouth, cheeks.
-        ellipse(16.5, 16.0, 4.3, 2.4, "W")
-        for ex in [11, 20] {
-            for dx in 0...1 { for dy in 0...2 { put(ex + dx, 12 + dy, "K") } }
-            put(ex, 12, "W")
-        }
-        put(16, 15, "P"); put(17, 15, "P")
-        put(15, 16, "K"); put(16, 17, "K"); put(17, 17, "K"); put(18, 16, "K")
-        put(9, 16, "P"); put(24, 16, "P")
-        // Red collar with a little knot.
-        for x in 8...24 { if g[20][x] == "O" || g[20][x] == "W" { put(x, 20, "R") }; if g[21][x] == "O" || g[21][x] == "W" { put(x, 21, "r") } }
-        put(16, 22, "R"); put(17, 22, "R"); put(15, 23, "r"); put(18, 23, "r")
-        // Resting front paw.
-        ellipse(19.5, 31.4, 2.6, 1.6, "W")
-        put(18, 31, "w"); put(20, 31, "w")
-        // Beckoning paw: an arm beside the head, raised by `paw`, outlined apart from the head.
-        let lift = Int((paw * 3).rounded())
-        let top = 8 - lift
-        for y in top...20 { for x in 2...5 { put(x, y, "O") } }
-        ellipse(3.9, Double(top) + 0.8, 2.5, 2.1, "W")
-        put(3, top, "P"); put(4, top, "P")
-        for y in (top + 3)...18 where y % 3 == 0 { put(2, y, "S") }
-        for y in (top + 1)...19 where g[y][6] != "." || g[y][7] != "." { put(6, y, "L") }
-
-        // Shading: right/bottom edges of orange go darker, top/left edges lighter.
-        let filled: (Int, Int) -> Bool = { x, y in x >= 0 && y >= 0 && x < w && y < h && g[y][x] != "." }
-        var shaded = g
-        for y in 0..<h { for x in 0..<w where g[y][x] == "O" {
-            if !filled(x + 1, y) || !filled(x, y + 1) { shaded[y][x] = "D" }
-            else if !filled(x - 1, y) { shaded[y][x] = "H" }
-        } }
-        g = shaded
-        // Ribbon + bell just below the tail tip, hanging outward.
-        let bx = Int(tip.x.rounded()), by = Int(tip.y.rounded()) + 2
-        put(bx - 1, by, "R"); put(bx, by, "r"); put(bx + 1, by, "R"); put(bx + 2, by + 1, "R")
-        let swing = bell * 1.2
-        let cx = Double(bx) + 3.2 + swing, cy = Double(by) + 3.4
-        ellipse(cx, cy, 2.3, 2.2, "G")
-        put(Int(cx - 1.2), Int(cy - 1.2), "Y")
-        put(Int(cx), Int(cy) + 1, "g"); put(Int(cx) - 1, Int(cy) + 1, "g"); put(Int(cx) + 1, Int(cy) + 1, "g")
-        put(Int(cx), Int(cy), "K")
-        // Fill pockets enclosed by the cat (between arm, head and tail) so no background shows through.
-        var outside = Set<Int>()
-        var stack = [Int]()
-        for x in 0..<w { stack += [x, (h - 1) * w + x] }
-        for y in 0..<h { stack += [y * w, y * w + w - 1] }
-        while let i = stack.popLast() {
-            let x = i % w, y = i / w
-            guard g[y][x] == ".", !outside.contains(i) else { continue }
-            outside.insert(i)
-            if x > 0 { stack.append(i - 1) }; if x < w - 1 { stack.append(i + 1) }
-            if y > 0 { stack.append(i - w) }; if y < h - 1 { stack.append(i + w) }
-        }
-        for y in 0..<h { for x in 0..<w where g[y][x] == "." && !outside.contains(y * w + x) { g[y][x] = "L" } }
-        // Outline every empty cell touching the cat.
-        var out = g
-        for y in 0..<h { for x in 0..<w where g[y][x] == "." {
-            if filled(x + 1, y) || filled(x - 1, y) || filled(x, y + 1) || filled(x, y - 1) { out[y][x] = "L" }
-        } }
-        return out
+    static let face: [[Character]] = {
+        var rows = half.map { Array($0 + String($0.reversed())) }
+        // ">" eye (5 rows) and a "_" cursor eye level with the base of the chevron.
+        for (r, cols) in [(5, [3, 4]), (6, [4, 5]), (7, [5, 6]), (8, [4, 5]), (9, [3, 4])] { for col in cols { rows[r][col] = "K" } }
+        for r in [8, 9] { for col in 11...14 { rows[r][col] = "K" } }
+        return rows
+    }()
+    static let gridW = 18
+    private static let palette: [Character: NSColor] = [
+        "O": c(0xEB8C54), "H": c(0xF4A873), "D": c(0xC96F3E), "P": c(0xF2A0A8), "C": c(0xF6E9CB), "K": c(0x1F2C26),
+    ]
+    private static func c(_ hex: UInt32, _ a: CGFloat = 1) -> NSColor {
+        NSColor(srgbRed: CGFloat(hex >> 16 & 255) / 255, green: CGFloat(hex >> 8 & 255) / 255, blue: CGFloat(hex & 255) / 255, alpha: a)
     }
 
-    /// The cat as a pixel image (1 point per pixel). Draw it with interpolation off.
-    static func image(paw: Double = 1, tail: Double = 0, bell: Double = 0) -> NSImage {
-        let g = grid(paw: paw, tail: tail, bell: bell)
-        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4,
-                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-        for y in 0..<h { for x in 0..<w {
-            guard let hex = colors[g[y][x]] else { continue }
-            rep.setColor(NSColor(deviceRed: CGFloat(hex >> 16 & 255) / 255, green: CGFloat(hex >> 8 & 255) / 255,
-                                 blue: CGFloat(hex & 255) / 255, alpha: 1), atX: x, y: y)
+    /// The tile (gradient, glow, cat, bubble) drawn into `tile` (bottom-left origin).
+    private static func drawMark(in tile: NSRect, radius: CGFloat) {
+        let s = tile.width
+        let path = NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius)
+        NSGraphicsContext.saveGraphicsState()
+        path.addClip()
+        NSGradient(colors: [c(0x4C7363), c(0x3E6153), c(0x20332B)])!.draw(in: tile, angle: -90)
+        let mid = NSPoint(x: tile.midX, y: tile.midY - s * 0.04)
+        NSGradient(colors: [c(0xF6E9CB, 0.22), c(0xF6E9CB, 0)])!
+            .draw(fromCenter: mid, radius: 0, toCenter: mid, radius: s * 0.48, options: [])
+        if s >= 128 {
+            c(0x000000, 0.10).setFill()
+            let step = s / 16
+            for gx in 0..<16 { for gy in 0..<16 where (gx + gy) % 2 == 0 {
+                let d = step * 0.12
+                NSRect(x: tile.minX + (CGFloat(gx) + 0.5) * step - d / 2, y: tile.minY + (CGFloat(gy) + 0.5) * step - d / 2, width: d, height: d).fill()
+            } }
+        }
+        NSGraphicsContext.restoreGraphicsState()
+
+        let px = max(1, (s * 0.60 / CGFloat(gridW)).rounded(.down))
+        let gw = px * CGFloat(gridW), gh = px * CGFloat(face.count)
+        let ox = (tile.minX + (s - gw) / 2 - px * 0.6).rounded(), oy = (tile.minY + (s - gh) / 2 - px * 0.5).rounded()
+        func cell(_ col: Int, _ row: Int) -> NSRect {
+            NSRect(x: ox + CGFloat(col) * px, y: oy + CGFloat(face.count - 1 - row) * px, width: px, height: px)
+        }
+        c(0x14201B, 0.55).setFill()
+        for (r, line) in face.enumerated() { for (col, ch) in line.enumerated() where ch != "." {
+            cell(col, r).offsetBy(dx: px * 0.5, dy: -px * 0.5).fill()
         } }
-        let img = NSImage(size: NSSize(width: w, height: h)); img.addRepresentation(rep)
-        return img
+        for (r, line) in face.enumerated() { for (col, ch) in line.enumerated() where ch != "." {
+            palette[ch]!.setFill(); cell(col, r).insetBy(dx: -0.5, dy: -0.5).fill()
+        } }
+        // Speech bubble with "…".
+        let b = NSRect(x: ox + gw - px * 1.2, y: oy + gh - px * 0.6, width: px * 5.6, height: px * 3.6)
+        let tail = NSBezierPath()
+        tail.move(to: NSPoint(x: b.minX + px * 0.9, y: b.minY + px * 0.2))
+        tail.line(to: NSPoint(x: b.minX - px * 0.2, y: b.minY - px * 0.9))
+        tail.line(to: NSPoint(x: b.minX + px * 2.0, y: b.minY + px * 0.2))
+        tail.close()
+        NSGraphicsContext.saveGraphicsState()
+        let sh = NSShadow(); sh.shadowColor = c(0x14201B, 0.55); sh.shadowBlurRadius = 0
+        sh.shadowOffset = NSSize(width: px * 0.5, height: -px * 0.5); sh.set()
+        c(0xF6E9CB).setFill(); NSBezierPath(roundedRect: b, xRadius: px * 1.1, yRadius: px * 1.1).fill(); tail.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        palette["O"]!.setFill()
+        for k in 0..<3 {
+            NSRect(x: (b.minX + px * (1.0 + CGFloat(k) * 1.4)).rounded(), y: (b.midY - px * 0.4).rounded(), width: px * 0.8, height: px * 0.8).fill()
+        }
+    }
+
+    /// The macOS app icon (824/1024 tile, soft shadow), drawing into a square of side `s`.
+    static func drawIcon(_ s: CGFloat) {
+        let inset = s * 100 / 1024
+        let tile = NSRect(x: inset, y: inset * 1.15, width: s - inset * 2, height: s - inset * 2)
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow(); shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
+        shadow.shadowBlurRadius = s * 0.03; shadow.shadowOffset = NSSize(width: 0, height: -s * 0.012); shadow.set()
+        c(0x20332B).setFill(); NSBezierPath(roundedRect: tile, xRadius: s * 185 / 1024, yRadius: s * 185 / 1024).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        drawMark(in: tile, radius: s * 185 / 1024)
+    }
+
+    private static var tileCache: NSImage?
+    /// The bare tile as an image of `size` points (rendered at 256 px so it stays sharp on Retina).
+    static func tile(size: CGFloat) -> NSImage {
+        let big: NSImage
+        if let cached = tileCache { big = cached } else {
+            let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256, bitsPerSample: 8, samplesPerPixel: 4,
+                                       hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            NSGraphicsContext.current?.imageInterpolation = .none
+            drawMark(in: NSRect(x: 0, y: 0, width: 256, height: 256), radius: 256 * 0.225)
+            NSGraphicsContext.restoreGraphicsState()
+            big = NSImage(size: NSSize(width: 256, height: 256)); big.addRepresentation(rep)
+            tileCache = big
+        }
+        return NSImage(size: NSSize(width: size, height: size), flipped: false) { r in
+            NSGraphicsContext.current?.imageInterpolation = .high
+            big.draw(in: r)
+            return true
+        }
     }
 }

@@ -9,7 +9,7 @@ enum SelfTest {
 
     static func run() -> Bool {
         hooks(); claudeLog(); codexLog(); timing(); layout(); keys(); installer(); approvals(); visibility(); speech()
-        summaries(); approvalHolding(); workHistory(); queueing()
+        summaries(); approvalHolding(); workHistory(); queueing(); styling()
         print("\(passes) passed, \(failures) failed")
         return failures == 0
     }
@@ -380,6 +380,22 @@ enum SelfTest {
 
     /// The bug: a parallel tool call or a subagent's tool events in the same session used to cancel a
     /// waiting approval and knock the cat out of "asking", so Allow went nowhere.
+    static func styling() {
+        let dir = NSTemporaryDirectory() + "agentcats-style-\(getpid())"
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let style = CatStyle(file: dir + "/styles.json")
+        check(style.accessory(for: "Miso") == nil, "no accessory by default")
+        style.set("crown", for: "Miso")
+        check(CatStyle(file: dir + "/styles.json").accessory(for: "Miso") == "crown", "accessory is saved between launches")
+        style.set("nonsense", for: "Miso")
+        check(style.accessory(for: "Miso") == nil, "unknown accessory is ignored")
+        let roster = CatRoster(file: dir + "/cats.json")
+        var s = Session(id: "x", agent: .claude, at: Date()); s.cwd = "/p/demo"
+        roster.setCat("Oreo", for: s)
+        check(CatRoster(file: dir + "/cats.json").cat(for: s, taken: []) == "Oreo", "chosen cat is kept for the project")
+        check(CatRoster(file: dir + "/cats.json").cat(for: s, taken: ["Oreo"]) != "Oreo", "chosen cat yields when already taken")
+    }
+
     static func approvalHolding() {
         let m = Monitor()
         m.acceptsApprovals = true

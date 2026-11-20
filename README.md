@@ -42,6 +42,8 @@ To type replies into Terminal.app, allow Agent Cats in **System Settings › Pri
 | Click the paw or tug the rope | Show or tuck away the room |
 | Double-click the rope | Hide everything until a cat needs you |
 | **Dashboard ↗** | Usage, recent work and pending approvals |
+| Dashboard › **Style** | Change a cat's coat and add a crown, bow, flower, glasses, shades or scarf |
+| Menu › **Take the tour** | Replay the first-run walkthrough |
 
 <p align="center"><img src="docs/images/bubbles.png" alt="Speech bubbles" width="640"></p>
 

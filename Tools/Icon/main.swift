@@ -1,49 +1,10 @@
-// Renders the Agent Cats icon: the beckoning cat with the bell on its tail, on a night tile.
+// Renders the Agent Cats icon: the orange cat with a bell on its tail, on a night tile.
 //   Tools/make-icon.sh            → Resources/AppIcon.icns
 //   Tools/make-icon.sh --preview  → dist/logo/ (size sheet + 1024 png)
 import AppKit
 
 func c(_ hex: UInt32, _ a: CGFloat = 1) -> NSColor {
     NSColor(srgbRed: CGFloat(hex >> 16 & 255) / 255, green: CGFloat(hex >> 8 & 255) / 255, blue: CGFloat(hex & 255) / 255, alpha: a)
-}
-
-func drawIcon(_ s: CGFloat) {
-    // macOS grid: 824/1024 tile, ~185/1024 corners, soft drop shadow.
-    let inset = s * 100 / 1024
-    let tile = NSRect(x: inset, y: inset * 1.15, width: s - inset * 2, height: s - inset * 2)
-    let path = NSBezierPath(roundedRect: tile, xRadius: s * 185 / 1024, yRadius: s * 185 / 1024)
-    NSGraphicsContext.saveGraphicsState()
-    let shadow = NSShadow(); shadow.shadowColor = NSColor.black.withAlphaComponent(0.4)
-    shadow.shadowBlurRadius = s * 0.03; shadow.shadowOffset = NSSize(width: 0, height: -s * 0.012); shadow.set()
-    c(0x12141A).setFill(); path.fill()
-    NSGraphicsContext.restoreGraphicsState()
-
-    NSGraphicsContext.saveGraphicsState()
-    path.addClip()
-    NSGradient(colors: [c(0x262A35), c(0x171A21), c(0x101217)])!.draw(in: tile, angle: -90)
-    // Warm glow behind the cat, like a lantern.
-    let glowC = NSPoint(x: tile.midX, y: tile.midY - tile.height * 0.02)
-    NSGradient(colors: [c(0xEB8C54, 0.55), c(0xEB8C54, 0.16), c(0xEB8C54, 0)])!
-        .draw(fromCenter: glowC, radius: 0, toCenter: glowC, radius: tile.width * 0.5, options: [])
-    // Faint pixel stars.
-    if s >= 128 {
-        for (fx, fy, a) in [(0.18, 0.82, 0.5), (0.80, 0.86, 0.35), (0.86, 0.30, 0.3), (0.13, 0.36, 0.25), (0.70, 0.70, 0.2)] {
-            c(0xF8EBD0, CGFloat(a)).setFill()
-            let d = (tile.width / 70).rounded()
-            NSRect(x: (tile.minX + tile.width * fx).rounded(), y: (tile.minY + tile.height * fy).rounded(), width: d, height: d).fill()
-        }
-    }
-    // Floor shadow under the cat.
-    c(0x000000, 0.35).setFill()
-    let floorW = tile.width * 0.52
-    NSBezierPath(ovalIn: NSRect(x: tile.midX - floorW / 2, y: tile.minY + tile.height * 0.115, width: floorW, height: tile.height * 0.06)).fill()
-    NSGraphicsContext.restoreGraphicsState()
-
-    let cat = LogoArt.image(paw: 1, tail: 0.2, bell: 0)
-    let px = (tile.height * 0.78 / CGFloat(LogoArt.h)).rounded(.down)
-    let cw = px * CGFloat(LogoArt.w), ch = px * CGFloat(LogoArt.h)
-    NSGraphicsContext.current?.imageInterpolation = .none
-    cat.draw(in: NSRect(x: ((s - cw) / 2).rounded(), y: (tile.minY + tile.height * 0.10).rounded(), width: cw, height: ch))
 }
 
 func render(_ size: Int) -> NSBitmapImageRep {
@@ -57,7 +18,7 @@ func render(_ size: Int) -> NSBitmapImageRep {
         NSGraphicsContext.current?.imageInterpolation = .high
         img.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
     } else {
-        drawIcon(CGFloat(size))
+        LogoArt.drawIcon(CGFloat(size))
     }
     NSGraphicsContext.restoreGraphicsState()
     return rep

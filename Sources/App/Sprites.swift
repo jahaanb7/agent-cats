@@ -44,10 +44,11 @@ final class SpriteBook {
         var propDY: Int = 0            // bob a prop up/down (zzz, ?, sign)
         var overrides: [String] = []   // "S=#7FD0BC" style palette tweaks (screen flicker)
         var grey = false
+        var accessory: String? = nil
     }
 
     func image(_ l: Look) -> CGImage? {
-        let key = "\(l.coat)|\(l.agent)|\(l.pose)|\(l.face ?? "")|\(l.props.joined(separator: ","))|\(l.propDY)|\(l.overrides.joined(separator: ","))|\(l.grey)"
+        let key = "\(l.coat)|\(l.agent)|\(l.pose)|\(l.face ?? "")|\(l.props.joined(separator: ","))|\(l.propDY)|\(l.overrides.joined(separator: ","))|\(l.grey)|\(l.accessory ?? "")"
         if let c = cache[key] { return c }
         guard let pose = poses[l.pose] else { return nil }
         var pal = common
@@ -75,6 +76,7 @@ final class SpriteBook {
                 put([f[r]], 2, 4 + r)
             }
         }
+        if let a = l.accessory, let art = Self.accessoryArt[a]?[l.pose] { put(art.grid, 2 + art.at.0, art.at.1) }
         for name in l.props {
             guard let p = props[name] else { continue }
             let bob = ["zzz", "ask", "alert"].contains(name) ? l.propDY : 0
@@ -93,6 +95,17 @@ final class SpriteBook {
         cache[key] = img
         return img
     }
+
+    /// Accessories, drawn in pose coordinates over the head or neck. Palette letters as in cats.json.
+    static let accessoryArt: [String: [String: Prop]] = [
+        "crown": ["sit": Prop(at: (9, 0), grid: ["Y.Y.Y", "YYYYY", "EYhYE"]), "loaf": Prop(at: (5, 8), grid: ["Y.Y", "YYY"])],
+        "bow": ["sit": Prop(at: (15, 2), grid: ["E.E", "EYE", "E.E"]), "loaf": Prop(at: (10, 8), grid: ["E.E", "EYE", "E.E"])],
+        "flower": ["sit": Prop(at: (15, 1), grid: [".n.", "nYn", ".n."]), "loaf": Prop(at: (10, 8), grid: [".n.", "nYn", ".n."])],
+        "glasses": ["sit": Prop(at: (7, 3), grid: ["ZZZ...ZZZ", "Z.ZZZZZ.Z", "Z.Z...Z.Z", "ZZZ...ZZZ"]),
+                    "loaf": Prop(at: (2, 11), grid: ["ZZZZZZZZZ", "Z..ZZZ..Z", "ZZZZ.ZZZZ"])],
+        "shades": ["sit": Prop(at: (7, 4), grid: ["MMMMMMMMM", ".MM...MM."]), "loaf": Prop(at: (2, 12), grid: ["MMMMMMMMM", ".MM...MM."])],
+        "scarf": ["sit": Prop(at: (7, 10), grid: ["EEhEEhEEhEE", "..EE......."])],
+    ]
 
     // MARK: pixel helpers
 
@@ -130,6 +143,7 @@ final class SpriteBook {
 /// Returns the look and a vertical body offset in art pixels (hops and bobs).
 func catLook(coat: String, agent: String, state: CatState, frame f: Int, sinceState: TimeInterval, still: Bool) -> (SpriteBook.Look, Int) {
     var l = SpriteBook.Look(coat: coat, agent: agent)
+    l.accessory = CatStyle.shared.accessory(for: coat)
     let f = still ? 0 : f
     let blink = f % 23 == 0 && f > 0
     var dy = 0

@@ -39,6 +39,7 @@ final class CallbackItem: NSMenuItem {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let monitor = Monitor()
     private let dashboard = DashboardController()
+    private var tour: TourController!
     private var statusItem: NSStatusItem!
     private var panel: TreePanel!
     private var tree: CatTreeView!
@@ -81,6 +82,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         panel = TreePanel()
         dashboard.model.book = book
+        tour = TourController(book: book)
+        CatStyle.shared.onChange = { [weak self] in self?.forceRefresh() }
+        dashboard.model.onSetCat = { [weak self] session, cat in
+            self?.monitor.roster.setCat(cat, for: session); self?.forceRefresh()
+        }
         tree = CatTreeView(book: book)
         tree.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         bubble = BubbleController(env: .init(
@@ -144,6 +150,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         StartupLog.write("Accessibility (typing into Terminal): \(AXIsProcessTrusted() ? "granted" : "not granted")")
         // New install, or the app moved since the hooks were set up: walk through setup.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.dashboard.showSetupIfNeeded() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            if self?.tour.shouldAutoShow == true { self?.tour.show() }
+        }
 
         let ws = NSWorkspace.shared.notificationCenter
         ws.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -393,6 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             m.addItem(CallbackItem("Connect hooks…") { [weak self] in self?.dashboard.show(); self?.dashboard.model.previewHooks() })
         }
+        m.addItem(CallbackItem("Take the tour") { [weak self] in self?.tour.show() })
         m.addItem(CallbackItem("About Agent Cats") {
             NSApp.activate(ignoringOtherApps: true)
             NSApp.orderFrontStandardAboutPanel(options: [

@@ -7,6 +7,8 @@ final class DashboardModel: ObservableObject {
     @Published var approvals: [PendingApproval] = []
     @Published var decisionMessage: String?
     @Published var showHookSetup = false
+    @Published var styleTick = 0
+    var onSetCat: ((Session, String) -> Void)?
     @Published var hookPreview = ""
     @Published var hookMessage: String?
     @Published var connectionMessage: String?
@@ -20,6 +22,9 @@ final class DashboardModel: ObservableObject {
         HookInstaller(hookBinary: Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/agentcats-hook").path)
     }
     var canInstallHooks: Bool { !hookChanges.isEmpty }
+
+    func setAccessory(_ id: String, cat: String) { CatStyle.shared.set(id, for: cat); styleTick += 1 }
+    func setCat(_ session: Session, _ cat: String) { onSetCat?(session, cat); styleTick += 1 }
 
     func refreshHookStatus() {
         hooksReady = (try? installer.plan()).map(\.isEmpty)
@@ -321,6 +326,20 @@ struct PixelCat: View {
     }
 }
 
+/// A small cat in one coat, for the style picker.
+struct CoatThumb: View {
+    let coat: String
+    let book: SpriteBook?
+    var body: some View {
+        Group {
+            if let img = book?.image(SpriteBook.Look(coat: coat, agent: "claude")) {
+                Image(decorative: img, scale: 1).interpolation(.none).resizable()
+            } else { Color.clear }
+        }
+        .frame(width: 28 * 1.3, height: 21 * 1.3)
+    }
+}
+
 /// The coral cushion the cats sit on in the room.
 struct Cushion: View {
     var width: CGFloat
@@ -397,8 +416,7 @@ struct DashboardView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            Image(nsImage: PixelFont.image("@ AGENT CATS", px: 2.5, fill: NSColor(Pix.cream),
-                                           shadow: NSColor(Pix.ink), accent: NSColor(Pix.orange)))
+            Image(nsImage: BrandMark.lockup(tileSize: 26, wordPx: 2.5, gap: 8))
                 .interpolation(.none)
                 .accessibilityLabel("Agent Cats")
             Rectangle().fill(Pix.cream.opacity(0.35)).frame(width: 4, height: 4)
@@ -529,6 +547,42 @@ struct DashboardView: View {
             recentWork(s)
             stats(s)
             activity(s)
+            styleCard(entry)
+        }
+    }
+
+    private func styleCard(_ entry: CatTreeView.Entry) -> some View {
+        _ = model.styleTick
+        let current = CatStyle.shared.accessory(for: entry.cat) ?? "none"
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("STYLE").font(Pix.mono(10, .heavy)).foregroundStyle(Pix.soft)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("COAT").font(Pix.mono(9, .heavy)).foregroundStyle(Pix.soft)
+                HStack(spacing: 6) {
+                    ForEach(CatRoster.names, id: \.self) { name in
+                        Button { model.setCat(entry.session, name) } label: {
+                            CoatThumb(coat: name, book: model.book).padding(4)
+                                .background(name == entry.cat ? Pix.cream : Color.clear)
+                                .overlay(Rectangle().stroke(name == entry.cat ? Pix.orange : Pix.line.opacity(0.25), lineWidth: 2))
+                        }
+                        .buttonStyle(.plain).help(name)
+                    }
+                }
+                Text("ACCESSORY").font(Pix.mono(9, .heavy)).foregroundStyle(Pix.soft)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 6)], alignment: .leading, spacing: 6) {
+                    ForEach(CatStyle.accessories, id: \.id) { a in
+                        let on = a.id == current
+                        Button { model.setAccessory(a.id, cat: entry.cat) } label: {
+                            Text(a.name.uppercased()).font(Pix.mono(10, .heavy)).frame(maxWidth: .infinity).padding(.vertical, 5)
+                                .foregroundStyle(on ? Pix.cream : Pix.ink)
+                                .background(on ? Pix.green : Pix.paper)
+                                .overlay(Rectangle().stroke(Pix.line, lineWidth: 2))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading).pixelCard()
         }
     }
 

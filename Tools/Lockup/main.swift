@@ -9,7 +9,7 @@ let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(W), pixelsHigh
 NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
 NSGraphicsContext.current!.imageInterpolation = .high
-let iconS: CGFloat = 300
+let iconS: CGFloat = 260
 let total = iconS + 30 + word.size.width
 let x0 = (W - total) / 2
 icon.draw(in: NSRect(x: x0, y: (H - iconS) / 2, width: iconS, height: iconS))

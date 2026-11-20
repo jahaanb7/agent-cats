@@ -139,7 +139,7 @@ final class PullCordView: NSView {
 /// Code-drawn room backdrop: wall, window, bunting, shelf, rug and toys, all in chunky pixels.
 /// The pixel cats stay crisp above it.
 final class RoomBackdrop: NSView {
-    static let headerH: CGFloat = 50, floorH: CGFloat = 39
+    static let headerH: CGFloat = 38, floorH: CGFloat = 39
     /// Left edge of the cat tree, so wall decorations stay clear of the cats.
     var treeMinX: CGFloat = .greatestFiniteMagnitude { didSet { if oldValue != treeMinX { needsDisplay = true } } }
 
@@ -280,9 +280,7 @@ final class CatRoomView: NSView {
         addSubview(backdrop)
         backdrop.addSubview(tree)
         let cream = NSColor(srgbRed: 0.96, green: 0.91, blue: 0.79, alpha: 1)
-        title.image = PixelFont.image("@ AGENT CATS", px: 2, fill: cream,
-                                      shadow: NSColor(srgbRed: 0.14, green: 0.22, blue: 0.19, alpha: 1),
-                                      accent: NSColor(srgbRed: 0.92, green: 0.55, blue: 0.33, alpha: 1))
+        title.image = BrandMark.lockup(tileSize: 20, wordPx: 2, gap: 6)
         title.imageScaling = .scaleNone
         title.setAccessibilityLabel("Agent Cats")
         backdrop.addSubview(title)
@@ -310,10 +308,10 @@ final class CatRoomView: NSView {
         self.expanded = expanded; self.treeSize = treeSize
         backdrop.isHidden = !expanded
         rope.expanded = expanded; rope.attention = attention > 0
-        subtitle.stringValue = count == 0 ? "YOUR CATS ARE RESTING" : "\(count) SESSION\(count == 1 ? "" : "S")"
+        subtitle.stringValue = count == 0 ? "ALL RESTING" : "\(count) SESSION\(count == 1 ? "" : "S")"
         review.title = attention > 0 ? "Review ↗" : "Dashboard ↗"
         // The room hugs its cats: room on the left for the toys, the tree on the right.
-        let size = expanded ? NSSize(width: max(264, treeSize.width + 120), height: max(190, treeSize.height + 134)) : NSSize(width: 36, height: 55)
+        let size = expanded ? NSSize(width: max(290, treeSize.width + 120), height: max(178, treeSize.height + 122)) : NSSize(width: 36, height: 55)
         setFrameSize(size)
         needsLayout = true
         return size
@@ -325,9 +323,11 @@ final class CatRoomView: NSView {
         backdrop.frame = NSRect(x: 0, y: 42, width: bounds.width, height: max(0, bounds.height - 42))
         let h = backdrop.bounds.height
         let titleSize = title.image?.size ?? .zero
-        title.frame = NSRect(x: 14, y: h - 10 - titleSize.height, width: titleSize.width, height: titleSize.height)
-        subtitle.frame = NSRect(x: 15, y: h - 44, width: bounds.width - 44, height: 14)
-        tuck.frame = NSRect(x: bounds.width - 31, y: h - 29, width: 22, height: 22)
+        // One row: lockup, then the session count beside it, then the close button.
+        let midY = h - RoomBackdrop.headerH / 2
+        title.frame = NSRect(x: 10, y: (midY - titleSize.height / 2).rounded(), width: titleSize.width, height: titleSize.height)
+        subtitle.frame = NSRect(x: title.frame.maxX + 10, y: (midY - 8).rounded(), width: max(0, bounds.width - title.frame.maxX - 48), height: 14)
+        tuck.frame = NSRect(x: bounds.width - 31, y: (midY - 11).rounded(), width: 22, height: 22)
         tree.frame = NSRect(x: bounds.width - treeSize.width - 16, y: 40, width: treeSize.width, height: treeSize.height)
         backdrop.treeMinX = tree.frame.minX - 8
         review.frame = NSRect(x: bounds.width - 116, y: 9, width: 102, height: 23)
