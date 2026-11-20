@@ -23,6 +23,7 @@ final class CatTreeView: NSView {
     private(set) var layout = TreeLayout.compute(ordered: [], maxWidth: 600)
     private var entries: [String: Entry] = [:]
     private var frameNo = 0
+    private var queuedCounts: [String: Int] = [:]
 
     init(book: SpriteBook) {
         self.book = book
@@ -84,9 +85,43 @@ final class CatTreeView: NSView {
             }
         }
         animate(force: true)
+        applyBadges()
         if !reduceMotion { arrived.forEach { Self.popIn($0) } }
         window?.invalidateCursorRects(for: self)
         return NSSize(width: layout.width, height: layout.height)
+    }
+
+    /// Messages queued for each cat; shown as a small number on its corner.
+    func setQueued(_ counts: [String: Int]) {
+        guard counts != queuedCounts else { return }
+        queuedCounts = counts
+        applyBadges()
+    }
+
+    private func applyBadges() {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        for (id, l) in catLayers {
+            let n = queuedCounts[id] ?? 0
+            let existing = l.sublayers?.first { $0.name == "queued" } as? CATextLayer
+            guard n > 0 else { existing?.removeFromSuperlayer(); continue }
+            let badge = existing ?? {
+                let b = CATextLayer()
+                b.name = "queued"
+                b.font = NSFont.monospacedSystemFont(ofSize: 8, weight: .heavy)
+                b.fontSize = 8
+                b.alignmentMode = .center
+                b.foregroundColor = NSColor(srgbRed: 1, green: 0.96, blue: 0.89, alpha: 1).cgColor
+                b.backgroundColor = NSColor(srgbRed: 0.86, green: 0.47, blue: 0.24, alpha: 1).cgColor
+                b.cornerRadius = 5.5
+                l.addSublayer(b)
+                return b
+            }()
+            badge.contentsScale = l.contentsScale
+            badge.string = n > 9 ? "9+" : "\(n)"
+            let w: CGFloat = n > 9 ? 16 : 11
+            badge.frame = CGRect(x: l.bounds.width - w - 1, y: l.bounds.height - 12, width: w, height: 11)
+        }
+        CATransaction.commit()
     }
 
     /// A cat lands on its perch: a small drop and a squash-and-settle.

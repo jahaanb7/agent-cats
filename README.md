@@ -1,4 +1,4 @@
-<h1 align="center">Agent Cats</h1>
+<h1 align="center"><img src="docs/images/logo.png" alt="Agent Cats" width="520"></h1>
 
 <p align="center"><b>Your Claude Code and Codex sessions, as pixel cats under the macOS menu bar.</b><br>
 They tell you what they need in one sentence. You answer from the bubble. No window switching.</p>

@@ -127,11 +127,11 @@ def mix(work, clips, tl, cues, paths, hook_end):
     km = add(work / "music.wav")
     dms = int(hook_end * 1000)
     chains += [
-        f"{''.join(vo_labels)}amix=inputs={len(vo_labels)}:normalize=0,asplit[vo][key]",
+        f"{''.join(vo_labels)}amix=inputs={len(vo_labels)}:normalize=0,apad,asplit[vo][key]",
         f"[{km}]volume=0.55,adelay={dms}|{dms}[mus]",
         "[mus][key]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=350:makeup=1[bed]",
         f"{''.join(fx_labels)}amix=inputs={len(fx_labels)}:normalize=0[fx]",
-        f"[vo][bed][fx]amix=inputs=3:normalize=0,atrim=0:{tl['duration']},loudnorm=I=-14:TP=-1.5:LRA=11[out]",
+        f"[vo][bed][fx]amix=inputs=3:duration=first:normalize=0,apad,atrim=0:{tl['duration']},loudnorm=I=-14:TP=-1.5:LRA=11[out]",
     ]
     out = work / "mix.m4a"
     run("ffmpeg", "-loglevel", "error", "-y", *inputs, "-filter_complex", ";".join(chains), "-map", "[out]",
@@ -160,7 +160,7 @@ def main():
         print("5/5 encoding")
         Path("dist").mkdir(exist_ok=True)
         run("ffmpeg", "-loglevel", "error", "-y", "-framerate", "30", "-i", work / "frames" / "f%04d.png", "-i", audio,
-            "-c:v", "libx264", "-preset", "slow", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "copy", "-shortest",
+            "-c:v", "libx264", "-preset", "slow", "-crf", "17", "-pix_fmt", "yuv420p", "-c:a", "copy", "-t", str(tl["duration"]),
             "-movflags", "+faststart", "dist/agent-cats-reel.mp4")
         if os.environ.get("REEL_KEEP"):
             print(f"kept work files in {work}")

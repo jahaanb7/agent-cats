@@ -88,50 +88,49 @@ func cue(_ name: String, at: Double, _ t: Double, gain: Double = 1) {
     cued.insert(key); cues.append(["name": name, "t": max(0, at), "gain": gain])
 }
 
-// MARK: karaoke captions
+// MARK: karaoke captions (pixel font, like the hook)
 
-let captionFont: NSFont = {
-    let base = NSFont.systemFont(ofSize: 78, weight: .black)
-    return NSFont(descriptor: base.fontDescriptor.withDesign(.rounded) ?? base.fontDescriptor, size: 78) ?? base
-}()
-
-func captionAttrs(_ color: NSColor) -> [NSAttributedString.Key: Any] {
-    let shadow = NSShadow(); shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
-    shadow.shadowOffset = NSSize(width: 0, height: -6); shadow.shadowBlurRadius = 0
-    return [.font: captionFont, .foregroundColor: color, .strokeColor: rgb(20, 28, 24), .strokeWidth: -7, .shadow: shadow]
+let captionPx: CGFloat = 9
+var wordCache: [String: NSImage] = [:]
+func wordImage(_ w: String, _ hot: Bool) -> NSImage {
+    let key = "\(w)|\(hot)"
+    if let img = wordCache[key] { return img }
+    let img = PixelFont.image(w, px: captionPx, fill: hot ? orange : cream, shadow: NSColor.black, accent: orange)
+    wordCache[key] = img
+    return img
 }
 
-/// Words appear as they're spoken; the word being said is orange and a little bigger.
+/// Words appear as they're spoken; the word being said is orange and pops a little.
 func caption(_ i: Int, t: Double, y: CGFloat) {
     let line = L[i]
     let until = S(i + 1) - 0.05
     guard t >= line.start - 0.05, t < until else { return }
-    let words = line.caption.split(separator: " ").map(String.init)
+    let words = line.caption.uppercased().split(separator: " ").map(String.init)
     let total = Double(words.reduce(0) { $0 + $1.count + 2 })
     var starts: [Double] = []; var acc = 0.0
     for w in words { starts.append(line.start + (line.end - line.start - 0.15) * acc / total); acc += Double(w.count + 2) }
-    let white = captionAttrs(.white)
-    let space = NSAttributedString(string: " ", attributes: white).size().width * 1.35
+    let space = captionPx * 5
     var rows: [[Int]] = [[]]; var rowW: CGFloat = 0
     for (k, w) in words.enumerated() {
-        let ww = NSAttributedString(string: w, attributes: white).size().width
-        if rowW > 0 && rowW + space + ww > 900 { rows.append([]); rowW = 0 }
+        let ww = wordImage(w, false).size.width
+        if rowW > 0 && rowW + space + ww > 940 { rows.append([]); rowW = 0 }
         rows[rows.count - 1].append(k); rowW += (rowW > 0 ? space : 0) + ww
     }
-    let lineH: CGFloat = 92
-    let fadeOut = CGFloat(1 - progress(t, until - 0.12, until))
+    let lineH = captionPx * 11
+    let fade = CGFloat(1 - progress(t, until - 0.12, until))
     for (r, row) in rows.enumerated() {
-        let widths = row.map { NSAttributedString(string: words[$0], attributes: white).size().width }
+        let widths = row.map { wordImage(words[$0], false).size.width }
         var x = (W - (widths.reduce(0, +) + space * CGFloat(row.count - 1))) / 2
         let yy = y + CGFloat(r) * lineH
         for (j, k) in row.enumerated() {
-            let p = progress(t, starts[k], starts[k] + 0.14)
+            let p = progress(t, starts[k], starts[k] + 0.12)
             if p > 0 {
                 let speaking = t < (k + 1 < starts.count ? starts[k + 1] : line.end)
-                let color = speaking ? orange : NSColor.white
-                let s = CGFloat(0.6 + 0.4 * easeOutBack(p)) * (speaking ? 1.04 : 1)
-                let str = NSAttributedString(string: words[k], attributes: captionAttrs(color.withAlphaComponent(fadeOut)))
-                withTransform(scale: s, around: CGPoint(x: x + widths[j] / 2, y: yy + lineH / 2)) { str.draw(at: NSPoint(x: x, y: yy)) }
+                let img = wordImage(words[k], speaking)
+                let sc = CGFloat(0.5 + 0.5 * easeOutBack(p)) * (speaking ? 1.06 : 1)
+                withTransform(scale: sc, around: CGPoint(x: x + widths[j] / 2, y: yy + img.size.height / 2)) {
+                    draw(img, NSRect(x: x, y: yy, width: img.size.width, height: img.size.height), alpha: fade, crisp: true)
+                }
             }
             x += widths[j] + space
         }
@@ -286,7 +285,7 @@ func burst(_ c: CGPoint, age: Double, seed: Int, count: Int = 18, speed: Double 
 
 func background(_ color: NSColor, floor: Bool) {
     color.setFill(); NSRect(x: 0, y: 0, width: W, height: H).fill()
-    NSColor.black.withAlphaComponent(0.14).setFill()
+    NSColor.white.withAlphaComponent(0.045).setFill()
     for gx in stride(from: CGFloat(0), to: W, by: 40) { for gy in stride(from: CGFloat(0), to: H, by: 40) where (Int(gx + gy) / 40) % 2 == 0 {
         NSRect(x: gx + 18, y: gy + 18, width: 4, height: 4).fill() } }
     guard floor else { return }
@@ -344,7 +343,7 @@ for f in 0..<frameCount {
         background(night, floor: false)
         let wipe = easeInOut(progress(t, S(1) + 0.15, S(1) + 0.75))
         if wipe > 0 {
-            forest.setFill()
+            rgb(28, 36, 40).setFill()
             let r = CGFloat(wipe) * 1250
             NSBezierPath(ovalIn: NSRect(x: W / 2 - r, y: 1080 - r, width: r * 2, height: r * 2)).fill()
         }
@@ -397,7 +396,7 @@ for f in 0..<frameCount {
         let leave = easeInOut(progress(t, S(6) - 0.15, S(6) + 0.3))
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: NSRect(x: 0, y: H * CGFloat(1 - easeOut(progress(t, S(2) - 0.1, S(2) + 0.2))), width: W, height: H)).addClip()
-        background(forest, floor: true)
+        background(night, floor: false)
         NSGraphicsContext.restoreGraphicsState()
         cue("whoosh", at: S(2) - 0.05, t, gain: 0.7)
         let Sc: CGFloat = 960 / roomImg.size.width
@@ -416,7 +415,9 @@ for f in 0..<frameCount {
             focus = CGPoint(x: focusA.x + (focusC.x - focusA.x) * toC, y: focusA.y + (focusC.y - focusA.y) * toC)
         }
         let punch = t >= S(4) + 0.2 && t < S(4) + 0.45 ? 0.03 * sin(progress(t, S(4) + 0.2, S(4) + 0.45) * .pi) : 0
-        withTransform(scale: CGFloat(zoom + punch), around: focus) {
+        let kick = t >= S(4) + 0.2 && t < S(4) + 0.5 ? CGFloat(1 - progress(t, S(4) + 0.2, S(4) + 0.5)) * 12 : 0
+        let kickShift = CGPoint(x: CGFloat(rnd(f, 5) - 0.5) * kick, y: CGFloat(rnd(f, 6) - 0.5) * kick)
+        withTransform(scale: CGFloat(zoom + punch), around: focus, shift: kickShift) {
             rgb(20, 20, 22, 0.92).setFill(); NSRect(x: -200, y: ry - 70, width: W + 400, height: 54).fill()
             let paw = pixelText("@", px: 4)
             draw(paw, NSRect(x: rx + rw - 140, y: ry - 58, width: paw.size.width, height: paw.size.height), crisp: true)
@@ -460,11 +461,18 @@ for f in 0..<frameCount {
             showBubble("c", "Pepper", askPR, from: S(5) + 0.2, until: S(6) - 0.1, clickAt: max(S(5) + 1.5, E(5) - 0.25), click: (32, 64), confetti: false)
         }
         cue("alert", at: S(3), t, gain: 0.5)
+        // Callback to the hook: the wait is now one second.
+        let timerIn = progress(t, S(4) + 0.35, S(4) + 0.6) * (1 - progress(t, S(5) - 0.3, S(5) - 0.05))
+        if timerIn > 0 {
+            let mint = rgb(127, 208, 188)
+            drawPixelCentered("WAITED", px: 6, y: 1520, alpha: CGFloat(timerIn), color: mint)
+            drawPixelCentered("00:01", px: 22, y: 1640, scale: CGFloat(easeOutBack(progress(t, S(4) + 0.35, S(4) + 0.7))), alpha: CGFloat(timerIn), color: mint)
+        }
     }
 
     // ── Scene 6: the dashboard's recent-work card.
     if t >= S(6) - 0.1 && t < S(7) + 0.3 {
-        if t >= S(6) + 0.3 { background(forest, floor: true) }
+        if t >= S(6) + 0.3 { background(night, floor: false) }
         cue("whoosh", at: S(6) - 0.1, t, gain: 0.6)
         let rise = easeOutBack(progress(t, S(6) - 0.1, S(6) + 0.45))
         let leave = easeInOut(progress(t, S(7) - 0.1, S(7) + 0.3))
@@ -500,7 +508,7 @@ for f in 0..<frameCount {
         let enter = easeOut(progress(t, S(7) - 0.1, S(7) + 0.25))
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: NSRect(x: 0, y: H * CGFloat(1 - enter), width: W, height: H)).addClip()
-        background(forest, floor: true)
+        background(night, floor: false)
         cue("pop", at: S(7) + 0.05, t, gain: 0.9)
         drawPixelCentered("@ AGENT CATS", px: 13, y: 700, scale: CGFloat(easeOutBack(progress(t, S(7) + 0.05, S(7) + 0.55))))
         drawPixelCentered("FOR CLAUDE CODE & CODEX", px: 6, y: 830, alpha: CGFloat(progress(t, S(7) + 0.5, S(7) + 0.8)))

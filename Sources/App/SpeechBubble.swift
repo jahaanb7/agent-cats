@@ -42,7 +42,7 @@ final class BubbleAnim: ObservableObject {
 }
 
 final class BubbleModel: ObservableObject {
-    enum Status: Equatable { case idle, sending, sent, failed(String) }
+    enum Status: Equatable { case idle, sending, sent, queued, failed(String) }
 
     @Published var speech: Speech?
     @Published var cat = ""
@@ -57,6 +57,11 @@ final class BubbleModel: ObservableObject {
     /// Other cats waiting to talk; the chip lets you hop to the next one.
     @Published var waiting = 0
     @Published var showHint = true
+    /// Messages waiting for this cat's turn to end, and why the last delivery failed.
+    @Published var queued: [QueuedMessage] = []
+    @Published var queueNote: String?
+    @Published var queueHeader = "Queued · sends when I finish"
+    @Published var queueCanSendNow = false
     /// Pop and typewriter progress live apart so ticking letters don't relayout the panel.
     let anim = BubbleAnim()
     var reduceMotion = false
@@ -72,6 +77,8 @@ final class BubbleModel: ObservableObject {
     var onClose: (() -> Void)?
     var onOpenTerminal: (() -> Void)?
     var onEndSession: (() -> Void)?
+    var onUnqueue: ((Int) -> Void)?
+    var onSendQueuedNow: (() -> Void)?
 }
 
 /// Speech-bubble outline with a small tail pointing at the cat.
@@ -168,6 +175,12 @@ struct BubbleView: View {
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
                 Spacer(minLength: 4)
+                if !model.queued.isEmpty {
+                    Text("\(model.queued.count) queued").font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .foregroundStyle(Palette.ink).background(Capsule().fill(Palette.ink.opacity(0.1)))
+                        .help("Messages waiting for this agent to finish")
+                }
                 if model.waiting > 0 {
                     Button { model.onNext?() } label: {
                         Text("+\(model.waiting) more").font(.system(size: 10, weight: .bold))
@@ -204,6 +217,8 @@ struct BubbleView: View {
                     .textSelection(.enabled)
                     .help(detail)
             }
+
+            if !model.queued.isEmpty { queueList }
 
             if model.status != .sent, !speech.choices.isEmpty {
                 FlowButtons(choices: speech.choices, disabled: model.status == .sending) { model.onChoice?($0) }
@@ -246,6 +261,9 @@ struct BubbleView: View {
         case .sent:
             Label("Got it — passing that along!", systemImage: "pawprint.fill")
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.green)
+        case .queued:
+            Label("Queued. I'll pass it on when I'm done.", systemImage: "tray.and.arrow.down.fill")
+                .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Palette.green)
         case .failed(let why):
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.red)
@@ -253,6 +271,47 @@ struct BubbleView: View {
                 Spacer(minLength: 0)
                 Button("Open") { model.onOpenTerminal?() }.controlSize(.small)
             }.font(.system(size: 11)).foregroundStyle(Palette.ink)
+        }
+    }
+
+    /// Your queued messages, numbered, each removable. Long lines are cut to one row.
+    private var queueList: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(model.queueHeader.uppercased())
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced)).foregroundStyle(Palette.soft)
+                Spacer(minLength: 4)
+                if model.queueCanSendNow {
+                    Button("Send now") { model.onSendQueuedNow?() }
+                        .buttonStyle(.plain).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Palette.green)
+                }
+            }
+            ForEach(Array(model.queued.prefix(5).enumerated()), id: \.element.id) { i, m in
+                HStack(spacing: 6) {
+                    Text("\(i + 1)").font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white).frame(width: 16, height: 16)
+                        .background(Circle().fill(i == 0 ? Palette.green : Palette.soft.opacity(0.6)))
+                    Text(m.text).font(.system(size: 11.5)).foregroundStyle(Palette.ink)
+                        .lineLimit(1).truncationMode(.tail).help(m.text)
+                    Spacer(minLength: 2)
+                    Button { model.onUnqueue?(m.id) } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(Palette.soft.opacity(0.8))
+                    }.buttonStyle(.plain).accessibilityLabel("Remove queued message \(i + 1)")
+                }
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(Color.white.opacity(0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Palette.line.opacity(0.25), lineWidth: 1))
+            }
+            if model.queued.count > 5 {
+                Text("+\(model.queued.count - 5) more").font(.system(size: 10)).foregroundStyle(Palette.soft)
+            }
+            if let note = model.queueNote {
+                HStack(alignment: .top, spacing: 5) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.red)
+                    Text(note).fixedSize(horizontal: false, vertical: true)
+                }.font(.system(size: 10.5)).foregroundStyle(Palette.ink)
+            }
         }
     }
 

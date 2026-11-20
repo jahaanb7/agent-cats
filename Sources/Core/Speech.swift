@@ -30,6 +30,7 @@ public struct Speech: Equatable, Sendable {
     public enum TextReply: Equatable, Sendable {
         case hookDeny                     // deny the waiting hook and pass the text to the agent
         case keys(prefix: [KeyStep])      // prefix, then the text, then Return
+        case queue                        // the agent is busy: hold the text until its turn ends
     }
 
     public var mood: Mood
@@ -57,6 +58,7 @@ public struct Speech: Equatable, Sendable {
         // No way to type there: drop keystroke replies and offer the jump instead.
         sp.choices = sp.choices.filter { if case .keys = $0.reply { return false }; return true }
         if case .keys? = sp.textReply { sp.textReply = nil }
+        if sp.textReply == .queue { sp.textReply = nil }
         if sp.choices.isEmpty, sp.needsAnswer || sp.mood == .done {
             sp.choices = [.init(label: "Answer in \(appName ?? "the terminal")", reply: .openTerminal, primary: true)]
         }
@@ -138,10 +140,12 @@ public struct Speech: Equatable, Sendable {
                           textReply: nil, placeholder: "", token: token)
 
         case .working, .thinking:
-            let doing = s.state == .working ? s.ask.map(Speech.ongoing) : nil
-            return Speech(mood: .status, headline: s.state == .working ? "Working…" : "Thinking…",
-                          text: doing ?? s.activity ?? "On it.", choices: [], textReply: nil, placeholder: "", token: token,
-                          detail: doing == nil ? nil : s.activity)
+            // A brief of the request it's on and what it's doing now; anything you type is queued
+            // for when this turn ends, so it can't land on a prompt mid-turn.
+            let w = Summary.working(s)
+            return Speech(mood: .status, headline: s.state == .working ? "Working on it" : "Thinking it over",
+                          text: w.text, choices: [], textReply: .queue,
+                          placeholder: "Queue a message for later…", token: token, detail: w.detail)
 
         case .idle:
             return Speech(mood: .status, headline: "Napping", text: s.lastMessage.map { Summary.firstSentence($0) } ?? "Nothing to do right now.",

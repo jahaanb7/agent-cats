@@ -94,7 +94,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             hop: { [weak self] id in self?.tree.hop(id) },
             reduceMotion: { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion },
-            chime: { [weak self] in self?.chime() }))
+            chime: { [weak self] in self?.chime() },
+            queued: { [weak self] counts in self?.tree.setQueued(counts) }))
         tree.onCatClick = { [weak self] s in self?.bubble.click(s) }
         tree.onCatDoubleClick = { [weak self] s in self?.bubble.doubleClick(s) }
         tree.onCatRightClick = { [weak self] s, e in self?.showCatMenu(s, e) }

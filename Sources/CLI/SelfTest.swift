@@ -9,7 +9,7 @@ enum SelfTest {
 
     static func run() -> Bool {
         hooks(); claudeLog(); codexLog(); timing(); layout(); keys(); installer(); approvals(); visibility(); speech()
-        summaries(); approvalHolding(); workHistory()
+        summaries(); approvalHolding(); workHistory(); queueing()
         print("\(passes) passed, \(failures) failed")
         return failures == 0
     }
@@ -433,5 +433,57 @@ enum SelfTest {
         check(t[0].endedAt != nil && t[0].tally == "changed 1 file · ran 1 command", "tally (got \(t[0].tally))")
         store.apply(hook("UserPromptSubmit", ["prompt": "now add a test"])!)
         check(store.sessions["S1"]!.tasks.count == 2, "next prompt starts a new task")
+    }
+
+    static func queueing() {
+        // A busy cat sums up what it's on, and queues what you type.
+        var s = Session(id: "Q1", agent: .claude, at: Date())
+        s.state = .working; s.ask = "I want to run the test suite."; s.activity = "Bash npm test"
+        var task = WorkTask(prompt: "build the new checkout page\nand make it fast", startedAt: Date())
+        task.files = ["Checkout.tsx", "cart.ts"]; task.commands = 3
+        s.tasks = [task]
+        var sp = Speech.make(s, hookPending: false)
+        check(sp.text == "Working on \u{201C}build the new checkout page and make it fast\u{201D}. I\u{2019}m going to run the test suite.",
+              "working summary: request and current step (got \(sp.text))")
+        check(sp.detail == "changed 2 files · ran 3 commands", "working tally as small print (got \(sp.detail ?? "nil"))")
+        check(sp.headline == "Working on it" && sp.textReply == .queue, "working bubble queues what you type")
+        check(sp.steps(forText: "hi") == nil, "queued text is never typed straight away")
+        check(Speech.make(s, hookPending: false, canType: false).textReply == nil, "no queue when the terminal can't be typed into")
+        s.state = .thinking
+        check(Speech.make(s, hookPending: false).text.hasSuffix("Thinking about the next step."), "thinking summary")
+        s.tasks = []; s.state = .working; s.ask = nil
+        sp = Speech.make(s, hookPending: false)
+        check(sp.text == "Busy with Bash npm test." && sp.detail == "Bash npm test", "working without a task falls back to the activity (got \(sp.text))")
+
+        // The queue: in order, one delivery per turn end, never mid-turn or over a question.
+        var q = MessageQueue()
+        let m1 = q.add("first  thing\n", to: "Q1")!, m2 = q.add("second", to: "Q1")!
+        check(q.add("   ", to: "Q1") == nil, "empty messages aren't queued")
+        check(q.list("Q1").map(\.text) == ["first  thing", "second"] && m1.id != m2.id, "queue keeps order, text made typeable")
+        check(q.counts == ["Q1": 2], "queued counts")
+        s.state = .working
+        check(q.next(for: s) == nil, "nothing is sent while it works")
+        for st in [CatState.thinking, .permission, .question, .error, .gone] {
+            s.state = st; check(q.next(for: s) == nil, "nothing is sent while \(st)")
+        }
+        s.state = .done; s.lastMessage = "Tests pass. Want me to open a PR?"; s.stateSince = Date()
+        check(q.next(for: s) == nil, "a question holds the queue until you answer")
+        s.lastMessage = "All done."
+        check(q.next(for: s) == m1, "turn end sends the first message")
+        q.markAttempt(s)
+        check(q.next(for: s) == nil, "one attempt per turn end")
+        q.allowRetry("Q1")
+        check(q.next(for: s) == m1, "Send now retries the same turn end")
+        q.markAttempt(s); q.remove(m1.id, from: "Q1")
+        check(q.next(for: s) == nil, "the next message waits for the next turn")
+        s.state = .working; s.stateSince = Date().addingTimeInterval(1)
+        s.state = .idle; s.stateSince = Date().addingTimeInterval(2)
+        check(q.next(for: s) == m2, "next turn end sends the next message")
+        q.remove(m2.id, from: "Q1")
+        check(q.counts.isEmpty && q.list("Q1").isEmpty, "empty after delivery")
+        _ = q.add("x", to: "gone"); q.prune(keeping: ["Q1"])
+        check(q.list("gone").isEmpty, "queues of ended sessions are dropped")
+        for i in 0..<MessageQueue.limit { _ = q.add("m\(i)", to: "Q1") }
+        check(q.add("one too many", to: "Q1") == nil, "queue is capped")
     }
 }

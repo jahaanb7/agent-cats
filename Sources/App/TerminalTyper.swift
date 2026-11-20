@@ -22,6 +22,8 @@ enum TerminalTyper {
     }
 
     private static var busy = false   // main thread only
+    /// A reply is being typed right now (main thread only).
+    static var isBusy: Bool { busy }
     private static var clearedStaleGrant = false   // main thread only
     private static var queue: DispatchQueue { TerminalJump.scriptQueue }   // one AppleScript thread
 

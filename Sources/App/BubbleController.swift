@@ -16,6 +16,8 @@ final class BubbleController {
         var reduceMotion: () -> Bool
         /// A soft sound when a cat speaks up on its own to ask you something.
         var chime: () -> Void = {}
+        /// Queued-message counts per session changed (for the badges on the cats).
+        var queued: ([String: Int]) -> Void = { _ in }
     }
 
     let model = BubbleModel()
@@ -36,6 +38,10 @@ final class BubbleController {
     private var chimed = Set<String>()           // tokens already announced with a sound
     private var fadeGen = 0
     private var capturing = false                // a screenshot is being taken; its clicks aren't "elsewhere"
+    private var outbox = MessageQueue()          // messages left for busy agents
+    private var outboxNote: [String: String] = [:]   // why the last queued delivery failed, per session
+    private var delivering = false
+    private var retryQueued = false
 
     init(env: Env) {
         self.env = env
@@ -62,6 +68,18 @@ final class BubbleController {
             self.attach([url])
         }
         model.onAddFiles = { [weak self] urls in self?.attach(urls) }
+        model.onUnqueue = { [weak self] mid in
+            guard let self, let id = self.sessionID else { return }
+            self.outbox.remove(mid, from: id)
+            self.syncQueue()
+        }
+        model.onSendQueuedNow = { [weak self] in
+            guard let self, let id = self.sessionID else { return }
+            self.outbox.allowRetry(id)
+            self.outboxNote[id] = nil
+            self.deliverQueued()
+            self.syncQueue()
+        }
         DispatchQueue.global(qos: .utility).async { Attachments.cleanUp() }
         // Content grows or shrinks (status line, "Sent", wrapped buttons): refit once per run loop.
         watch = model.objectWillChange.sink { [weak self] _ in self?.queuePlace() }
@@ -143,6 +161,7 @@ final class BubbleController {
         model.cat = entry.cat
         model.reduceMotion = env.reduceMotion()
         model.speech = speech(for: entry.session)
+        syncQueue()
         // The hint teaches double-click on your own clicks only, and goes away once you've used it.
         let hints = UserDefaults.standard.integer(forKey: "bubbleHintsShown")
         let learned = UserDefaults.standard.bool(forKey: "bubbleDoubleClickLearned")
@@ -227,6 +246,10 @@ final class BubbleController {
         for e in list { considerSpeaking(e.session) }
         speakNext()
         updateWaiting()
+        outbox.prune(keeping: Set(entries.keys))
+        outboxNote = outboxNote.filter { entries[$0.key] != nil }
+        deliverQueued()
+        syncQueue()
     }
 
     /// macOS can take the bubble off screen behind our back (a full-screen Space closing, a display
@@ -256,6 +279,11 @@ final class BubbleController {
                 return
             }
             spoken[id] = fresh.token
+            if current.textReply == .queue, fresh.textReply == .queue {
+                // Working ↔ thinking: the same bubble with fresher words. No pop, no hop, draft kept.
+                showQuietly(fresh, over: current)
+                syncQueue(); queuePlace(); return
+            }
             model.status = .idle
             model.speech = fresh
             model.generation += 1
@@ -263,9 +291,17 @@ final class BubbleController {
             scheduleAutoHide()
         } else if fresh != current, model.status != .sent {
             // Same moment, better details (e.g. the reply text arrived after the Stop hook).
-            model.speech = fresh
+            showQuietly(fresh, over: current)
         }
+        syncQueue()
         queuePlace()
+    }
+
+    /// Swaps in new words without replaying the pop. A finished typewriter shows the new text whole.
+    private func showQuietly(_ fresh: Speech, over current: Speech) {
+        let finished = model.anim.shown >= current.text.count
+        model.speech = fresh
+        if finished { model.anim.shown = fresh.text.count }
     }
 
     /// Cats speak up when they need you, finish, or get stuck.
@@ -370,7 +406,19 @@ final class BubbleController {
         guard let sp = model.speech else { return }
         let full = Attachments.reply(text: text, files: model.attachments)
         guard !full.isEmpty else { return }
-        if sp.textReply == .hookDeny {
+        if sp.textReply == .queue {
+            guard let id = sessionID else { return }
+            guard outbox.add(full, to: id) != nil else {
+                model.status = .failed("That's a lot queued already (\(MessageQueue.limit) max). Remove one first."); return
+            }
+            model.draft = ""
+            model.attachments = []
+            outboxNote[id] = nil
+            model.status = .queued
+            env.hop(id)
+            deliverQueued()   // it may have finished in the meantime
+            syncQueue()
+        } else if sp.textReply == .hookDeny {
             perform(.hook(allow: false), text: full)
         } else if let steps = sp.steps(forText: full) {
             perform(.keys(steps), text: full)
@@ -482,9 +530,87 @@ final class BubbleController {
         model.draft = ""
         model.attachments = []
         env.hop(id)
+        DispatchQueue.main.async { [weak self] in self?.deliverQueued() }
         // The agent usually reacts (token changes → close). If it doesn't visibly, tidy up anyway.
         scheduleClose(after: 4)
         refreshOpenBubble()
+    }
+
+    // MARK: queued messages
+
+    /// Pushes the open bubble's queue and the cat badges to the UI.
+    private func syncQueue() {
+        env.queued(outbox.counts)
+        guard let id = sessionID else { return }
+        let list = outbox.list(id)
+        if model.queued != list { model.queued = list }
+        let s = entries[id]?.session
+        let note = list.isEmpty ? nil : outboxNote[id]
+        if model.queueNote != note { model.queueNote = note }
+        let header: String
+        if s?.asksForReply == true || s?.state.needsAttention == true { header = "Queued · sends after you answer" }
+        else if s.map(MessageQueue.canDeliver) == true { header = delivering ? "Queued · sending…" : "Queued · ready to send" }
+        else { header = "Queued · sends when I finish" }
+        if model.queueHeader != header { model.queueHeader = header }
+        let canNow = !list.isEmpty && !delivering && s.map(MessageQueue.canDeliver) == true && outbox.next(for: s!) == nil
+        if model.queueCanSendNow != canNow { model.queueCanSendNow = canNow }
+    }
+
+    /// Types the next queued message into a session whose turn just ended. One message per turn end,
+    /// one session at a time; the reply it starts brings the next turn end, and the next message.
+    private func deliverQueued() {
+        guard !delivering else { return }
+        if TerminalTyper.isBusy {
+            // Your own reply is being typed: try again in a moment.
+            guard !retryQueued else { return }
+            retryQueued = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.retryQueued = false; self?.deliverQueued(); self?.syncQueue()
+            }
+            return
+        }
+        for (id, _) in outbox.counts.sorted(by: { $0.key < $1.key }) {
+            guard let s = entries[id]?.session, let msg = outbox.next(for: s) else { continue }
+            if sessionID == id, model.status == .sending { continue }
+            outbox.markAttempt(s)
+            guard target(s).ok else {
+                outboxNote[id] = "I can't type into this terminal, so your message is waiting. Double-click me to send it yourself."
+                continue
+            }
+            delivering = true
+            let token = Speech.token(s)
+            var hidden = false
+            StartupLog.write("Delivering queued message to \(id.prefix(8))")
+            TerminalTyper.send([.text(msg.text), .pause, .returnKey], to: s, stillValid: { [weak self] in
+                // Checked against the turn end it's delivered at, not the busy moment it was queued in.
+                guard let self, let live = self.entries[id]?.session else { return false }
+                return Speech.token(live) == token && MessageQueue.canDeliver(live)
+            }, willFocusTerminal: { [weak self] in
+                // Keys must only reach the terminal, never a bubble you were typing in.
+                guard let self, self.isOpen, self.panel.isVisible else { return }
+                self.panel.makeFirstResponder(nil)
+                self.panel.orderOut(nil)
+                hidden = true
+            }) { [weak self] outcome in
+                guard let self else { return }
+                self.delivering = false
+                if hidden, self.isOpen { self.panel.orderFrontRegardless() }
+                switch outcome {
+                case .sent:
+                    self.outbox.remove(msg.id, from: id)
+                    self.outboxNote[id] = nil
+                    self.env.hop(id)
+                case .needsAccessibility:
+                    self.outboxNote[id] = "Turn on Agent Cats in System Settings › Privacy & Security › Accessibility, then press Send now."
+                case .failed(let why):
+                    self.outboxNote[id] = why
+                }
+                self.syncQueue()
+                self.deliverQueued()
+            }
+            syncQueue()
+            return
+        }
     }
 
     func openTerminal() {

@@ -13,6 +13,12 @@ let cases: [(String, Speech)] = [
     ("Biscuit", Speech.make(session(.permission) { $0.activity = "Bash rm -rf build && make" }, hookPending: true)),
     ("Pepper", Speech.make(session(.done) { $0.lastMessage = "All 113 checks pass and the bubble builds. Want me to open a PR?" }, hookPending: false)),
     ("Tofu", Speech.make(session(.error) { $0.activity = "usage limit reached" }, hookPending: false)),
+    ("Miso", Speech.make(session(.working) {
+        $0.ask = "I want to run the test suite."; $0.activity = "Bash npm test"
+        var t = WorkTask(prompt: "build the new checkout page", startedAt: Date())
+        t.files = ["Checkout.tsx", "cart.ts", "styles.css"]; t.commands = 5
+        $0.tasks = [t]
+    }, hookPending: false)),
 ]
 var images: [NSImage] = []
 for (i, (cat, sp)) in cases.enumerated() {
@@ -21,6 +27,10 @@ for (i, (cat, sp)) in cases.enumerated() {
     m.tailOnTop = i % 2 == 0; m.tailX = 90
     if i == 1 { m.status = .failed("I can only type into Terminal or iTerm. Double-click me to answer in Cursor.") }
     if i == 2 { m.status = .sent }
+    if i == 4 {
+        m.queued = [QueuedMessage(id: 1, text: "then add a loading spinner to the pay button"), QueuedMessage(id: 2, text: "and write a test for the empty cart")]
+        m.status = .queued
+    }
     if i == 0 { m.waiting = 2; m.attachments = [URL(fileURLWithPath: "/tmp/Screenshot 2026-11-17 at 21.04.11.png"), URL(fileURLWithPath: "/tmp/schema.sql")] }
     let host = NSHostingView(rootView: BubbleView(model: m))
     host.frame.size = NSSize(width: 300, height: host.fittingSize.height)
